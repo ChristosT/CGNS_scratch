@@ -248,7 +248,8 @@ int main(int argc, char **argv)
   PetscInt coords_loc_size, coords_dim;
 
   DMPlexCreateFromFile(PETSC_COMM_WORLD, "test.cgns", "ex16_plex", PETSC_TRUE, &dm);
-
+  PetscCall(DMSetUp(dm));
+  PetscCall(DMSetFromOptions(dm));
   PetscCall(DMGetCoordinatesLocal(dm, &coords_loc));
   PetscCall(DMGetCoordinateDim(dm, &coords_dim));
   PetscCall(VecGetLocalSize(coords_loc, &coords_loc_size));
@@ -260,25 +261,23 @@ int main(int argc, char **argv)
   vtkNew<vtkDoubleArray> pts_array;
   pts_array->SetNumberOfComponents(3);
 //  pts_array->SetNumberOfTuples(num_local_nodes);
-  double* pts_ptr;
-  PetscCall(VecGetArray(coords_loc, &pts_ptr));
-  pts_array->SetArray(pts_ptr, coords_loc_size, 1);
+  const double* pts_ptr;
+  PetscCall(VecGetArrayRead(coords_loc, &pts_ptr));
+  double* pts_copy = new double[coords_loc_size];
+  memcpy(pts_copy, pts_ptr, coords_loc_size*sizeof(double));
+  pts_array->SetArray(pts_copy, coords_loc_size, 0, vtkAbstractArray::VTK_DATA_ARRAY_DELETE);
+  VecRestoreArrayRead(coords_loc, &pts_ptr);
   vtkNew<vtkPoints> pts;
   pts->SetData(pts_array.GetPointer());
   grid->SetPoints(pts.GetPointer());
 
   PetscInt closure_dof, *closure_indices, elem_size;
 
-  std::cout << dm->localSection << std::endl;
-
   DM cdm;
   PetscCall(DMGetCoordinateDM(dm, &cdm));
 
-  std::cout << cdm->localSection << std::endl;
-
   PetscInt          cStart, cEnd;
   PetscCall(DMPlexGetHeightStratum(dm, 0, &cStart, &cEnd));
-  std::cout << ">>>>" << cStart << " " << cEnd << std::endl;
 
   DMPolytopeType cell_type;
   PetscCall(DMPlexGetCellType(dm, 0, &cell_type));
@@ -286,13 +285,15 @@ int main(int argc, char **argv)
   const int *perm;
   PetscCall(DMPlexCGNSGetPermutation_Internal(cell_type, closure_dof / coords_dim, &perm));
   std::cout << cell_type << " " << DM_POLYTOPE_HEXAHEDRON << " " << closure_dof << std::endl;
-  for(int i=0; i<24; i++)
+  for(int i=0; i<8; i++)
   {
-    std::cout << closure_indices[i] << std::endl;
+    std::cout << closure_indices[perm[i]] << std::endl;
     // std::cout << ": " << perm[i]*3 << std::endl;
     // std::cout << closure_indices[perm[i]*3] << std::endl;
   }
+  DMPlexRestoreClosureIndices(cdm, cdm->localSection, cdm->localSection, 0, PETSC_FALSE, &closure_dof, &closure_indices, NULL, NULL);
 
+  /*
   // PetscInt vStart, vEnd;
   // DMPlexGetDepthStratum(dm, 0, &vStart, &vEnd);
   // PetscInt *closure;
@@ -341,7 +342,7 @@ int main(int argc, char **argv)
 
   PetscCall(DMRestoreGlobalVector(dm, &V));
   */
-  //DMDestroy(&dm);
+  PetscCall(DMDestroy(&dm));
 
   PetscFinalize();
   return 0;
