@@ -6,6 +6,7 @@
 #include <vtkUnstructuredGrid.h>
 #include <vtkPoints.h>
 #include <vtkDoubleArray.h>
+#include <vtkPointData.h>
 #include <vtkXMLUnstructuredGridWriter.h>
 
 #if !defined(CGNS_ENUMT)
@@ -210,6 +211,18 @@ int main(int argc, char **argv)
   PetscInt lsize;
   VecGetLocalSize(local_sln, &lsize);
   std::cout << "SIZE: " << lsize << std::endl;
+  vtkNew<vtkDoubleArray> fields;
+  fields->SetName("fields");
+  fields->SetNumberOfComponents(5);
+  fields->SetNumberOfTuples(lsize/5);
+  PetscScalar* slnArray;
+  VecGetArray(local_sln, &slnArray);
+  memcpy(fields->GetPointer(0), slnArray, lsize*sizeof(double));
+  for(int i=0; i<lsize; i++)
+  {
+    std::cout << slnArray[i] << std::endl;
+  }
+  VecRestoreArray(local_sln, &slnArray);
 
   PetscCall(DMGetCoordinatesLocal(dm, &coords_loc));
   PetscCall(DMGetCoordinateDim(dm, &coords_dim));
@@ -219,6 +232,8 @@ int main(int argc, char **argv)
   std::cout << num_local_nodes << std::endl;
 
   vtkNew<vtkUnstructuredGrid> grid;
+  grid->GetPointData()->AddArray(fields.GetPointer());
+
   vtkNew<vtkDoubleArray> pts_array;
   pts_array->SetNumberOfComponents(3);
 //  pts_array->SetNumberOfTuples(num_local_nodes);
