@@ -63,6 +63,7 @@ static PetscErrorCode DMPlexCGNSGetPermutation_Internal(DMPolytopeType cell_type
     56, 59, 58, 57, 60, 61, 62, 63, // vertices
     39, 38, 37, 36, 35, 34, 33, 32, // bottom edges
     51, 50, 48, 49, 52, 53, 55, 54, // mid edges; Paraview needs edge 21-22 swapped with 23-24
+//    51, 50, 48, 49, 53, 52, 54, 55, // mid edges; Paraview needs edge 21-22 swapped with 23-24
     40, 41, 42, 43, 44, 45, 46, 47, // top edges
     8,  10, 11, 9,                  // z-minus face
     16, 17, 19, 18,                 // y-minus face
@@ -161,95 +162,55 @@ static PetscErrorCode DMPlexCGNSGetPermutation_Internal(DMPolytopeType cell_type
   PetscFunctionReturn(PETSC_SUCCESS);
 }
 
-// typedef struct {
-//   char infile[PETSC_MAX_PATH_LEN];  /* Input mesh filename */
-//   char outfile[PETSC_MAX_PATH_LEN]; /* Dump/reload mesh filename */
-// } AppCtx;
-
-// static PetscErrorCode ProcessOptions(MPI_Comm comm, AppCtx *options)
-// {
-//   PetscFunctionBeginUser;
-//   options->infile[0]  = '\0';
-//   options->outfile[0] = '\0';
-//   PetscOptionsBegin(comm, "", "Meshing Problem Options", "DMPLEX");
-//   PetscCall(PetscOptionsString("-infile", "The input CGNS file", EX, options->infile, options->infile, sizeof(options->infile), NULL));
-//   PetscCall(PetscOptionsString("-outfile", "The output CGNS file", EX, options->outfile, options->outfile, sizeof(options->outfile), NULL));
-//   PetscOptionsEnd();
-//   PetscCheck(options->infile[0], comm, PETSC_ERR_USER_INPUT, "-infile needs to be specified");
-//   PetscCheck(options->outfile[0], comm, PETSC_ERR_USER_INPUT, "-outfile needs to be specified");
-//   PetscFunctionReturn(PETSC_SUCCESS);
-// }
-
-// // @brief Create DM from CGNS file and setup PetscFE to VecLoad solution from that file
-// PetscErrorCode ReadCGNSDM(MPI_Comm comm, const char filename[], DM *dm)
-// {
-//   PetscInt degree;
-
-//   PetscFunctionBeginUser;
-//   PetscCall(DMPlexCreateFromFile(comm, filename, "ex16_plex", PETSC_TRUE, dm));
-//   PetscCall(DMSetFromOptions(*dm));
-//   PetscCall(DMViewFromOptions(*dm, NULL, "-dm_view"));
-
-//   { // Get degree of the natural section
-//     PetscFE        fe_natural;
-//     PetscDualSpace dual_space_natural;
-
-//     PetscCall(DMGetField(*dm, 0, NULL, (PetscObject *)&fe_natural));
-//     PetscCall(PetscFEGetDualSpace(fe_natural, &dual_space_natural));
-//     PetscCall(PetscDualSpaceGetOrder(dual_space_natural, &degree));
-//     PetscCall(DMClearFields(*dm));
-//     PetscCall(DMSetLocalSection(*dm, NULL));
-//   }
-
-//   { // Setup fe to load in the initial condition data
-//     PetscFE        fe;
-//     PetscInt       dim, cStart, cEnd;
-//     PetscInt       ctInt, mincti, maxcti;
-//     DMPolytopeType dm_polytope, cti;
-
-//     PetscCall(DMGetDimension(*dm, &dim));
-//     // Limiting to single topology in this simple example
-//     PetscCall(DMPlexGetHeightStratum(*dm, 0, &cStart, &cEnd));
-//     PetscCall(DMPlexGetCellType(*dm, cStart, &dm_polytope));
-//     for (PetscInt i = cStart + 1; i < cEnd; i++) {
-//       PetscCall(DMPlexGetCellType(*dm, i, &cti));
-//       PetscCheck(cti == dm_polytope, comm, PETSC_ERR_RETURN, "Multi-topology not yet supported in this example!");
-//     }
-//     ctInt = cti;
-//     PetscCallMPI(MPIU_Allreduce(&ctInt, &maxcti, 1, MPIU_INT, MPI_MAX, comm));
-//     PetscCallMPI(MPIU_Allreduce(&ctInt, &mincti, 1, MPIU_INT, MPI_MIN, comm));
-//     PetscCheck(mincti == maxcti, comm, PETSC_ERR_RETURN, "Multi-topology not yet supported in this example!");
-//     PetscCall(PetscPrintf(comm, "Mesh confirmed to be single topology %s\n", DMPolytopeTypes[cti]));
-//     PetscCall(PetscFECreateLagrangeByCell(PETSC_COMM_SELF, dim, 5, dm_polytope, degree, PETSC_DETERMINE, &fe));
-//     PetscCall(PetscObjectSetName((PetscObject)fe, "FE for VecLoad"));
-//     PetscCall(DMAddField(*dm, NULL, (PetscObject)fe));
-//     PetscCall(DMCreateDS(*dm));
-//     PetscCall(PetscFEDestroy(&fe));
-//   }
-
-//   // Set section component names, used when writing out CGNS files
-//   PetscSection section;
-//   PetscCall(DMGetLocalSection(*dm, &section));
-//   PetscCall(PetscSectionSetFieldName(section, 0, ""));
-//   PetscCall(PetscSectionSetComponentName(section, 0, 0, "Pressure"));
-//   PetscCall(PetscSectionSetComponentName(section, 0, 1, "VelocityX"));
-//   PetscCall(PetscSectionSetComponentName(section, 0, 2, "VelocityY"));
-//   PetscCall(PetscSectionSetComponentName(section, 0, 3, "VelocityZ"));
-//   PetscCall(PetscSectionSetComponentName(section, 0, 4, "Temperature"));
-//   PetscFunctionReturn(PETSC_SUCCESS);
-// }
-
 int main(int argc, char **argv)
 {
   PetscInitialize(&argc, &argv, NULL, PETSC_NULLPTR);
 
   DM          dm;
-  Vec      coords_loc;
+  Vec      coords_loc, local_sln;
   PetscInt coords_loc_size, coords_dim;
+  PetscInt degree, dim;
 
   DMPlexCreateFromFile(PETSC_COMM_WORLD, "test.cgns", "ex16_plex", PETSC_TRUE, &dm);
   PetscCall(DMSetUp(dm));
   PetscCall(DMSetFromOptions(dm));
+
+  PetscFE        fe_natural;
+  PetscDualSpace dual_space_natural;
+
+  PetscCall(DMGetField(dm, 0, NULL, (PetscObject *)&fe_natural));
+  PetscCall(PetscFEGetDualSpace(fe_natural, &dual_space_natural));
+  PetscCall(PetscDualSpaceGetOrder(dual_space_natural, &degree));
+  PetscCall(DMClearFields(dm));
+  PetscCall(DMSetLocalSection(dm, NULL));
+
+  PetscCall(DMGetDimension(dm, &dim));
+
+  DMPolytopeType cell_type;
+
+  PetscFE fe;
+  PetscCall(DMPlexGetCellType(dm, 0, &cell_type));
+  PetscCall(PetscFECreateLagrangeByCell(PETSC_COMM_SELF, dim, 5, cell_type, degree, PETSC_DETERMINE, &fe));
+  PetscCall(PetscObjectSetName((PetscObject)fe, "FE for VecLoad"));
+  PetscCall(DMAddField(dm, NULL, (PetscObject)fe));
+  PetscCall(DMCreateDS(dm));
+  PetscCall(PetscFEDestroy(&fe));
+
+  // Set section component names, used when writing out CGNS files
+  PetscSection section;
+  PetscCall(DMGetLocalSection(dm, &section));
+  PetscCall(PetscSectionSetFieldName(section, 0, ""));
+  PetscCall(PetscSectionSetComponentName(section, 0, 0, "Pressure"));
+  PetscCall(PetscSectionSetComponentName(section, 0, 1, "VelocityX"));
+  PetscCall(PetscSectionSetComponentName(section, 0, 2, "VelocityY"));
+  PetscCall(PetscSectionSetComponentName(section, 0, 3, "VelocityZ"));
+  PetscCall(PetscSectionSetComponentName(section, 0, 4, "Temperature"));
+
+  DMGetLocalVector(dm, &local_sln);
+  PetscInt lsize;
+  VecGetLocalSize(local_sln, &lsize);
+  std::cout << "SIZE: " << lsize << std::endl;
+
   PetscCall(DMGetCoordinatesLocal(dm, &coords_loc));
   PetscCall(DMGetCoordinateDim(dm, &coords_dim));
   PetscCall(VecGetLocalSize(coords_loc, &coords_loc_size));
@@ -279,69 +240,79 @@ int main(int argc, char **argv)
   PetscInt          cStart, cEnd;
   PetscCall(DMPlexGetHeightStratum(dm, 0, &cStart, &cEnd));
 
-  DMPolytopeType cell_type;
-  PetscCall(DMPlexGetCellType(dm, 0, &cell_type));
-  PetscCall(DMPlexGetClosureIndices(cdm, cdm->localSection, cdm->localSection, 0, PETSC_FALSE, &closure_dof, &closure_indices, NULL, NULL));
-  const int *perm;
-  PetscCall(DMPlexCGNSGetPermutation_Internal(cell_type, closure_dof / coords_dim, &perm));
-  std::cout << cell_type << " " << DM_POLYTOPE_HEXAHEDRON << " " << closure_dof << std::endl;
-  for(int i=0; i<8; i++)
+  PetscCall(DMPlexGetClosureIndices(cdm, cdm->localSection, cdm->localSection, cStart, PETSC_FALSE, &closure_dof, &closure_indices, NULL, NULL));
+  DMPlexRestoreClosureIndices(cdm, cdm->localSection, cdm->localSection, cStart, PETSC_FALSE, &closure_dof, &closure_indices, NULL, NULL);
+
+  PetscInt cSize = closure_dof / coords_dim;
+  PetscInt nCells = cEnd - cStart;
+
+  vtkNew<vtkIdTypeArray> connectivity;
+  connectivity->SetNumberOfTuples(cSize*nCells);
+
+  vtkNew<vtkIdTypeArray> offsets;
+  offsets->SetNumberOfTuples(nCells+1);
+  for(PetscInt i=0; i<nCells; i++)
   {
-    std::cout << closure_indices[perm[i]] << std::endl;
-    // std::cout << ": " << perm[i]*3 << std::endl;
-    // std::cout << closure_indices[perm[i]*3] << std::endl;
+    offsets->SetValue(i, i*cSize);
   }
-  DMPlexRestoreClosureIndices(cdm, cdm->localSection, cdm->localSection, 0, PETSC_FALSE, &closure_dof, &closure_indices, NULL, NULL);
+  offsets->SetValue(nCells, nCells*cSize);
 
-  /*
-  // PetscInt vStart, vEnd;
-  // DMPlexGetDepthStratum(dm, 0, &vStart, &vEnd);
-  // PetscInt *closure;
-  // PetscInt numPoints;
-  // PetscCall(DMPlexGetTransitiveClosure(dm, 0, PETSC_TRUE, &numPoints, &closure));
-  // std::cout << numPoints << std::endl;
-  // std::cout << vStart << " " << vEnd << std::endl;
+  vtkNew<vtkCellArray> cells;
+  cells->SetData(offsets, connectivity);
 
-  // for (PetscInt i = 0; i < numPoints * 2; i += 2) {
-  //     PetscInt point = closure[i] - vStart;
-  //     std::cout << point << std::endl;
-  // }
+  static const int HEXA_8_ToVTK[8] = { 0, 1, 2, 3, 4, 5, 6, 7 };
+  static const int HEXA_27_ToVTK[27] = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 16, 17, 18, 19, 12, 13, 14, 15, 24, 22, 21, 23, 20, 25, 26 };
+  static const int HEXA_64_ToVTK[64] = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 12, 15, 14, 24, 25, 26, 27, 29, 28, 31, 30, 16, 17, 18, 19, 22, 23, 20, 21, 49, 48, 50, 51, 40, 41, 43, 42, 36, 37, 39, 38, 45, 44, 46, 47, 32, 33, 35, 34, 52, 53, 55, 54, 56, 57, 59, 58, 60, 61, 63, 62 };
 
-  // vtkNew<vtkXMLUnstructuredGridWriter> writer;
-  // writer->SetInputData(grid.GetPointer());
-  // writer->SetFileName("grid.vtu");
-  // writer->SetDataModeToAscii();
-  // writer->Write();
-/*
-  Vec         V;
-  PetscViewer viewer;
-  const char *name;
-  PetscReal   time;
-  PetscBool   set;
-  comm = PETSC_COMM_WORLD;
+  const int* translator = nullptr;
 
-  // Load DM from CGNS file
-  PetscCall(ReadCGNSDM(comm, infilename, &dm));
-  PetscCall(DMSetOptionsPrefix(dm, "loaded_"));
-  PetscCall(DMViewFromOptions(dm, NULL, "-dm_view"));
+  vtkNew<vtkUnsignedCharArray> cellTypes;
+  cellTypes->SetNumberOfTuples(nCells);
+  if (cSize == 8)
+  {
+    cellTypes->FillValue(VTK_HEXAHEDRON);
+    translator = HEXA_8_ToVTK;
+  }
+  else if (cSize == 27)
+  {
+    cellTypes->FillValue(VTK_TRIQUADRATIC_HEXAHEDRON);
+    translator = HEXA_27_ToVTK;
+  }
+  else if (cSize == 64)
+  {
+    cellTypes->FillValue(VTK_LAGRANGE_HEXAHEDRON);
+    translator = HEXA_64_ToVTK;
+  }
+  else
+  {
+    std::cerr << "Cell type not supported." << std::endl;
+    return 1;
+  }
+      
+  grid->SetCells(cellTypes, cells);
+  for(PetscInt cid=cStart, cid0=0; cid<cEnd; cid++, cid0++)
+  {
+    PetscCall(DMPlexGetClosureIndices(cdm, cdm->localSection, cdm->localSection, cid, PETSC_FALSE, &closure_dof, &closure_indices, NULL, NULL));
+    const int *perm;
+    PetscCall(DMPlexCGNSGetPermutation_Internal(cell_type, cSize, &perm));
+    PetscInt* tmpids = new PetscInt[cSize];
+    for(int i=0; i<cSize; i++)
+    {
+      tmpids[i] = closure_indices[perm[i]*coords_dim]/coords_dim;
+    }
+    for(int i=0; i<cSize; i++)
+    {
+      connectivity->SetValue(cid0*cSize + i, tmpids[translator[i]]);
+    }
+    DMPlexRestoreClosureIndices(cdm, cdm->localSection, cdm->localSection, 0, PETSC_FALSE, &closure_dof, &closure_indices, NULL, NULL);
+  }
+  
+  vtkNew<vtkXMLUnstructuredGridWriter> writer;
+  writer->SetInputData(grid.GetPointer());
+  writer->SetFileName("grid.vtu");
+  writer->SetDataModeToAscii();
+  writer->Write();
 
-  // Load solution from CGNS file
-  PetscCall(PetscViewerCGNSOpen(comm, infilename, FILE_MODE_READ, &viewer));
-  PetscCall(DMGetGlobalVector(dm, &V));
-  PetscCall(PetscViewerCGNSSetSolutionIndex(viewer, 1));
-  PetscCall(PetscViewerCGNSGetSolutionName(viewer, &name));
-  PetscCall(PetscViewerCGNSGetSolutionTime(viewer, &time, &set));
-  PetscCall(PetscPrintf(comm, "Solution Name: %s, and time %g\n", name, (double)time));
-  PetscCall(VecLoad(V, viewer));
-  PetscCall(PetscViewerDestroy(&viewer));
-
-  // Write loaded solution to CGNS file
-  PetscCall(PetscViewerCGNSOpen(comm, user.outfile, FILE_MODE_WRITE, &viewer));
-  PetscCall(VecView(V, viewer));
-  PetscCall(PetscViewerDestroy(&viewer));
-
-  PetscCall(DMRestoreGlobalVector(dm, &V));
-  */
   PetscCall(DMDestroy(&dm));
 
   PetscFinalize();
