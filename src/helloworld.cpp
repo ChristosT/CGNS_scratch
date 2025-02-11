@@ -167,10 +167,18 @@ int main(int argc, char **argv)
 {
   PetscInitialize(&argc, &argv, NULL, PETSC_NULLPTR);
 
+  MPI_Comm comm = PETSC_COMM_WORLD;
+  int rank;
+  MPI_Comm_rank(comm, &rank);
+
   DM          dm;
-  Vec      coords_loc, local_sln;
+  Vec      coords_loc, local_sln, V;
   PetscInt coords_loc_size, coords_dim;
   PetscInt degree, dim;
+  PetscViewer viewer;
+  const char *name;
+  PetscReal   time;
+  PetscBool   set;
 
   DMPlexCreateFromFile(PETSC_COMM_WORLD, "test.cgns", "ex16_plex", PETSC_TRUE, &dm);
   PetscCall(DMSetUp(dm));
@@ -187,10 +195,13 @@ int main(int argc, char **argv)
 
   PetscCall(DMGetDimension(dm, &dim));
 
+  PetscInt          cStart, cEnd;
+  PetscCall(DMPlexGetHeightStratum(dm, 0, &cStart, &cEnd));
+
   DMPolytopeType cell_type;
 
   PetscFE fe;
-  PetscCall(DMPlexGetCellType(dm, 0, &cell_type));
+  PetscCall(DMPlexGetCellType(dm, cStart, &cell_type));
   PetscCall(PetscFECreateLagrangeByCell(PETSC_COMM_SELF, dim, 5, cell_type, degree, PETSC_DETERMINE, &fe));
   PetscCall(PetscObjectSetName((PetscObject)fe, "FE for VecLoad"));
   PetscCall(DMAddField(dm, NULL, (PetscObject)fe));
@@ -207,32 +218,47 @@ int main(int argc, char **argv)
   PetscCall(PetscSectionSetComponentName(section, 0, 3, "VelocityZ"));
   PetscCall(PetscSectionSetComponentName(section, 0, 4, "Temperature"));
 
-  DMGetLocalVector(dm, &local_sln);
+  // Load solution from CGNS file
+  PetscCall(PetscViewerCGNSOpen(comm, "test.cgns", FILE_MODE_READ, &viewer));
+  PetscCall(DMGetGlobalVector(dm, &V));
+  PetscCall(PetscViewerCGNSSetSolutionIndex(viewer, 1));
+  PetscCall(PetscViewerCGNSGetSolutionName(viewer, &name));
+  PetscCall(PetscViewerCGNSGetSolutionTime(viewer, &time, &set));
+  PetscCall(PetscPrintf(comm, "Solution Name: %s, and time %g\n", name, (double)time));
+  PetscCall(VecLoad(V, viewer));
+  PetscCall(PetscViewerDestroy(&viewer));
+  
+//  DMGetLocalVector(dm, &local_sln);
   PetscInt lsize;
-  VecGetLocalSize(local_sln, &lsize);
-  std::cout << "SIZE: " << lsize << std::endl;
+  VecGetLocalSize(V, &lsize);
+  if (rank == 0)
+    std::cout << "SIZE: " << lsize << std::endl;
   vtkNew<vtkDoubleArray> fields;
   fields->SetName("fields");
   fields->SetNumberOfComponents(5);
   fields->SetNumberOfTuples(lsize/5);
   PetscScalar* slnArray;
-  VecGetArray(local_sln, &slnArray);
+  VecGetArray(V, &slnArray);
   memcpy(fields->GetPointer(0), slnArray, lsize*sizeof(double));
-  for(int i=0; i<lsize; i++)
-  {
-    std::cout << slnArray[i] << std::endl;
-  }
-  VecRestoreArray(local_sln, &slnArray);
+  // for(int i=0; i<lsize; i++)
+  // {
+  //   std::cout << slnArray[i] << std::endl;
+  // }
+  VecRestoreArray(V, &slnArray);
 
   PetscCall(DMGetCoordinatesLocal(dm, &coords_loc));
   PetscCall(DMGetCoordinateDim(dm, &coords_dim));
   PetscCall(VecGetLocalSize(coords_loc, &coords_loc_size));
 
   auto num_local_nodes = coords_loc_size / coords_dim;
-  std::cout << num_local_nodes << std::endl;
-
+  if (rank == 0)
+  {
+    std::cout << num_local_nodes << std::endl;
+    std::cout << cStart << " -- " << cEnd << std::endl;
+  }
+  
   vtkNew<vtkUnstructuredGrid> grid;
-  grid->GetPointData()->AddArray(fields.GetPointer());
+//  grid->GetPointData()->AddArray(fields.GetPointer());
 
   vtkNew<vtkDoubleArray> pts_array;
   pts_array->SetNumberOfComponents(3);
@@ -251,9 +277,6 @@ int main(int argc, char **argv)
 
   DM cdm;
   PetscCall(DMGetCoordinateDM(dm, &cdm));
-
-  PetscInt          cStart, cEnd;
-  PetscCall(DMPlexGetHeightStratum(dm, 0, &cStart, &cEnd));
 
   PetscCall(DMPlexGetClosureIndices(cdm, cdm->localSection, cdm->localSection, cStart, PETSC_FALSE, &closure_dof, &closure_indices, NULL, NULL));
   DMPlexRestoreClosureIndices(cdm, cdm->localSection, cdm->localSection, cStart, PETSC_FALSE, &closure_dof, &closure_indices, NULL, NULL);
@@ -321,12 +344,15 @@ int main(int argc, char **argv)
     }
     DMPlexRestoreClosureIndices(cdm, cdm->localSection, cdm->localSection, 0, PETSC_FALSE, &closure_dof, &closure_indices, NULL, NULL);
   }
-  
-  vtkNew<vtkXMLUnstructuredGridWriter> writer;
-  writer->SetInputData(grid.GetPointer());
-  writer->SetFileName("grid.vtu");
-  writer->SetDataModeToAscii();
-  writer->Write();
+
+  if (rank ==0)
+  {
+    vtkNew<vtkXMLUnstructuredGridWriter> writer;
+    writer->SetInputData(grid.GetPointer());
+    writer->SetFileName("grid.vtu");
+    writer->SetDataModeToAscii();
+    writer->Write();
+  }
 
   PetscCall(DMDestroy(&dm));
 
