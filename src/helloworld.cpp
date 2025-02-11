@@ -227,10 +227,16 @@ int main(int argc, char **argv)
   PetscCall(PetscPrintf(comm, "Solution Name: %s, and time %g\n", name, (double)time));
   PetscCall(VecLoad(V, viewer));
   PetscCall(PetscViewerDestroy(&viewer));
-  
+
+  PetscCall(DMGetLocalVector(dm, &local_sln));
+
+  // Transfer data from global vector to local vector (with ghost points)
+  DMGlobalToLocalBegin(dm, V, INSERT_VALUES, local_sln);
+  DMGlobalToLocalEnd(dm, V, INSERT_VALUES, local_sln);
+ 
 //  DMGetLocalVector(dm, &local_sln);
   PetscInt lsize;
-  VecGetLocalSize(V, &lsize);
+  VecGetLocalSize(local_sln, &lsize);
   if (rank == 0)
     std::cout << "SIZE: " << lsize << std::endl;
   vtkNew<vtkDoubleArray> fields;
@@ -238,13 +244,13 @@ int main(int argc, char **argv)
   fields->SetNumberOfComponents(5);
   fields->SetNumberOfTuples(lsize/5);
   PetscScalar* slnArray;
-  VecGetArray(V, &slnArray);
+  VecGetArray(local_sln, &slnArray);
   memcpy(fields->GetPointer(0), slnArray, lsize*sizeof(double));
   // for(int i=0; i<lsize; i++)
   // {
   //   std::cout << slnArray[i] << std::endl;
   // }
-  VecRestoreArray(V, &slnArray);
+  VecRestoreArray(local_sln, &slnArray);
 
   PetscCall(DMGetCoordinatesLocal(dm, &coords_loc));
   PetscCall(DMGetCoordinateDim(dm, &coords_dim));
@@ -258,7 +264,7 @@ int main(int argc, char **argv)
   }
   
   vtkNew<vtkUnstructuredGrid> grid;
-//  grid->GetPointData()->AddArray(fields.GetPointer());
+  grid->GetPointData()->AddArray(fields.GetPointer());
 
   vtkNew<vtkDoubleArray> pts_array;
   pts_array->SetNumberOfComponents(3);
