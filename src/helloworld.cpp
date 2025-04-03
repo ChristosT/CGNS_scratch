@@ -8,6 +8,11 @@
 #include <vtkDoubleArray.h>
 #include <vtkPointData.h>
 #include <vtkXMLUnstructuredGridWriter.h>
+#include <vtkUnstructuredGridAlgorithm.h>
+#include <vtkObjectFactory.h>
+#include <vtkNew.h>
+#include <vtkInformationVector.h>
+
 
 #if !defined(CGNS_ENUMT)
   #define CGNS_ENUMT(a) a
@@ -163,9 +168,107 @@ static PetscErrorCode DMPlexCGNSGetPermutation_Internal(DMPolytopeType cell_type
   PetscFunctionReturn(PETSC_SUCCESS);
 }
 
-int main(int argc, char **argv)
+class vtkPETScCGNSReader : public vtkUnstructuredGridAlgorithm
 {
-  PetscInitialize(&argc, &argv, NULL, PETSC_NULLPTR);
+public:
+  static vtkPETScCGNSReader* New();
+  vtkTypeMacro(vtkPETScCGNSReader, vtkUnstructuredGridAlgorithm);
+  void PrintSelf(ostream& os, vtkIndent indent) override;
+
+  vtkSetStdStringFromCharMacro(FileName);
+  vtkGetCharFromStdStringMacro(FileName);
+
+protected:
+
+  std::string FileName;
+
+  int RequestData(vtkInformation*, vtkInformationVector**, vtkInformationVector*) override;
+
+  vtkPETScCGNSReader();
+  ~vtkPETScCGNSReader() override;
+
+private:
+  vtkPETScCGNSReader(const vtkPETScCGNSReader&) = delete;
+  void operator=(const vtkPETScCGNSReader&) = delete;
+
+  vtkDoubleArray* LoadSolution(DM* dm);
+};
+
+vtkStandardNewMacro(vtkPETScCGNSReader);
+
+vtkPETScCGNSReader::vtkPETScCGNSReader()
+{
+  this->SetNumberOfInputPorts(0);
+  this->SetNumberOfOutputPorts(1);
+}
+
+vtkPETScCGNSReader::~vtkPETScCGNSReader()
+{}
+
+void vtkPETScCGNSReader::PrintSelf(ostream& os, vtkIndent indent)
+{}
+
+vtkDoubleArray* vtkPETScCGNSReader::LoadSolution(DM* dm)
+{
+  MPI_Comm comm = PETSC_COMM_WORLD;
+
+  Vec local_sln, V;
+  PetscViewer viewer;
+  PetscReal   time;
+  PetscBool   set;
+
+  // Set section component names, used when writing out CGNS files
+  PetscSection section;
+  DMGetLocalSection(*dm, &section);
+  
+  PetscSectionSetFieldName(section, 0, "");
+  PetscSectionSetComponentName(section, 0, 0, "Pressure");
+  PetscSectionSetComponentName(section, 0, 1, "VelocityX");
+  PetscSectionSetComponentName(section, 0, 2, "VelocityY");
+  PetscSectionSetComponentName(section, 0, 3, "VelocityZ");
+  PetscSectionSetComponentName(section, 0, 4, "Temperature");
+  
+  // Load solution from CGNS file
+  PetscViewerCGNSOpen(comm, this->FileName.c_str(), FILE_MODE_READ, &viewer);
+  DMGetGlobalVector(*dm, &V);
+  PetscViewerCGNSSetSolutionIndex(viewer, -1);
+  PetscInt idx;
+  // PetscViewerCGNSGetSolutionName(viewer, &name);
+  PetscViewerCGNSGetSolutionTime(viewer, &time, &set);
+  VecLoad(V, viewer);
+  PetscViewerDestroy(&viewer);
+
+  DMGetLocalVector(*dm, &local_sln);
+
+  // Transfer data from global vector to local vector (with ghost points)
+  DMGlobalToLocalBegin(*dm, V, INSERT_VALUES, local_sln);
+  DMGlobalToLocalEnd(*dm, V, INSERT_VALUES, local_sln);
+  
+  PetscInt lsize;
+  VecGetLocalSize(local_sln, &lsize);
+
+  vtkNew<vtkDoubleArray> fields;
+  fields->SetName("fields");
+  fields->SetNumberOfComponents(5);
+  fields->SetNumberOfTuples(lsize/5);
+  PetscScalar* slnArray;
+  VecGetArray(local_sln, &slnArray);
+  memcpy(fields->GetPointer(0), slnArray, lsize*sizeof(double));
+  VecRestoreArray(local_sln, &slnArray);
+
+  fields->Register(this);
+  return fields.GetPointer();
+}
+
+int vtkPETScCGNSReader::RequestData(vtkInformation* vtkNotUsed(request),
+  vtkInformationVector** vtkNotUsed(inputVector), vtkInformationVector* outputVector)
+{
+  PetscOptionsSetValue(NULL, "-dm_plex_cgns_parallel", "1");
+  PetscInitializeNoArguments();
+
+  vtkInformation* outInfo = outputVector->GetInformationObject(0);
+  // get the output
+  vtkUnstructuredGrid* grid = vtkUnstructuredGrid::GetData(outInfo);
 
   MPI_Comm comm = PETSC_COMM_WORLD;
   int rank;
@@ -180,7 +283,7 @@ int main(int argc, char **argv)
   PetscReal   time;
   PetscBool   set;
 
-  DMPlexCreateFromFile(PETSC_COMM_WORLD, "test.cgns", "ex16_plex", PETSC_TRUE, &dm);
+  DMPlexCreateFromFile(PETSC_COMM_WORLD, this->FileName.c_str(), "ex16_plex", PETSC_TRUE, &dm);
   PetscCall(DMSetUp(dm));
   PetscCall(DMSetFromOptions(dm));
 
@@ -208,67 +311,14 @@ int main(int argc, char **argv)
   PetscCall(DMCreateDS(dm));
   PetscCall(PetscFEDestroy(&fe));
 
-  // Set section component names, used when writing out CGNS files
-  PetscSection section;
-  PetscCall(DMGetLocalSection(dm, &section));
-  PetscCall(PetscSectionSetFieldName(section, 0, ""));
-  PetscCall(PetscSectionSetComponentName(section, 0, 0, "Pressure"));
-  PetscCall(PetscSectionSetComponentName(section, 0, 1, "VelocityX"));
-  PetscCall(PetscSectionSetComponentName(section, 0, 2, "VelocityY"));
-  PetscCall(PetscSectionSetComponentName(section, 0, 3, "VelocityZ"));
-  PetscCall(PetscSectionSetComponentName(section, 0, 4, "Temperature"));
-
-  // Load solution from CGNS file
-  PetscCall(PetscViewerCGNSOpen(comm, "test.cgns", FILE_MODE_READ, &viewer));
-  PetscCall(DMGetGlobalVector(dm, &V));
-  PetscCall(PetscViewerCGNSSetSolutionIndex(viewer, 1));
-  PetscCall(PetscViewerCGNSGetSolutionName(viewer, &name));
-  PetscCall(PetscViewerCGNSGetSolutionTime(viewer, &time, &set));
-  PetscCall(PetscPrintf(comm, "Solution Name: %s, and time %g\n", name, (double)time));
-  PetscCall(VecLoad(V, viewer));
-  PetscCall(PetscViewerDestroy(&viewer));
-
-  PetscCall(DMGetLocalVector(dm, &local_sln));
-
-  // Transfer data from global vector to local vector (with ghost points)
-  DMGlobalToLocalBegin(dm, V, INSERT_VALUES, local_sln);
-  DMGlobalToLocalEnd(dm, V, INSERT_VALUES, local_sln);
- 
-//  DMGetLocalVector(dm, &local_sln);
-  PetscInt lsize;
-  VecGetLocalSize(local_sln, &lsize);
-  if (rank == 0)
-    std::cout << "SIZE: " << lsize << std::endl;
-  vtkNew<vtkDoubleArray> fields;
-  fields->SetName("fields");
-  fields->SetNumberOfComponents(5);
-  fields->SetNumberOfTuples(lsize/5);
-  PetscScalar* slnArray;
-  VecGetArray(local_sln, &slnArray);
-  memcpy(fields->GetPointer(0), slnArray, lsize*sizeof(double));
-  // for(int i=0; i<lsize; i++)
-  // {
-  //   std::cout << slnArray[i] << std::endl;
-  // }
-  VecRestoreArray(local_sln, &slnArray);
-
   PetscCall(DMGetCoordinatesLocal(dm, &coords_loc));
   PetscCall(DMGetCoordinateDim(dm, &coords_dim));
   PetscCall(VecGetLocalSize(coords_loc, &coords_loc_size));
 
   auto num_local_nodes = coords_loc_size / coords_dim;
-  if (rank == 0)
-  {
-    std::cout << num_local_nodes << std::endl;
-    std::cout << cStart << " -- " << cEnd << std::endl;
-  }
   
-  vtkNew<vtkUnstructuredGrid> grid;
-  grid->GetPointData()->AddArray(fields.GetPointer());
-
   vtkNew<vtkDoubleArray> pts_array;
   pts_array->SetNumberOfComponents(3);
-//  pts_array->SetNumberOfTuples(num_local_nodes);
   const double* pts_ptr;
   PetscCall(VecGetArrayRead(coords_loc, &pts_ptr));
   double* pts_copy = new double[coords_loc_size];
@@ -351,31 +401,35 @@ int main(int argc, char **argv)
     DMPlexRestoreClosureIndices(cdm, cdm->localSection, cdm->localSection, 0, PETSC_FALSE, &closure_dof, &closure_indices, NULL, NULL);
   }
 
+  vtkDoubleArray* fields = this->LoadSolution(&dm);
+  grid->GetPointData()->AddArray(fields);
+  fields->Delete();
+
+  PetscCall(DMDestroy(&dm));
+
+  return 1;
+}
+
+int main(int argc, char **argv)
+{
+  PetscInitialize(&argc, &argv, NULL, PETSC_NULLPTR);
+
+  vtkNew<vtkPETScCGNSReader> reader;
+  reader->SetFileName("test.cgns");
+  reader->Update();
+
+  MPI_Comm comm = PETSC_COMM_WORLD;
+  int rank;
+  MPI_Comm_rank(comm, &rank);
+
   if (rank ==0)
   {
     vtkNew<vtkXMLUnstructuredGridWriter> writer;
-    writer->SetInputData(grid.GetPointer());
+    writer->SetInputData(reader->GetOutput());
     writer->SetFileName("grid.vtu");
     writer->SetDataModeToAscii();
     writer->Write();
   }
 
-  PetscCall(DMDestroy(&dm));
-
-  PetscFinalize();
   return 0;
 }
-
-/*TEST
-  build:
-    requires: cgns
-  testset:
-    suffix: cgns
-    requires: !complex
-    nsize: 4
-    args: -infile ${wPETSC_DIR}/share/petsc/datafiles/meshes/2x2x2_Q3_wave.cgns -outfile 2x2x2_Q3_wave_output.cgns
-    args: -dm_plex_cgns_parallel -loaded_dm_view
-    test:
-      suffix: simple
-      args: -petscpartitioner_type simple
-TEST*/
