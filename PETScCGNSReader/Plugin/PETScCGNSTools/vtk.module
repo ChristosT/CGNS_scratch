@@ -1,0 +1,8 @@
+NAME
+  PETScCGNSTools
+DEPENDS
+  VTK::CommonDataModel
+  VTK::CommonExecutionModel
+PRIVATE_DEPENDS
+  PkgConfig::PETSc
+  MPI::MPI_C

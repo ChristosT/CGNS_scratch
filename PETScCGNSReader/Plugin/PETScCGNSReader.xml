@@ -1,0 +1,31 @@
+<!-- one can simply load this XML into ParaView as a plugin and then open data
+    files from File|Open -->
+<ServerManagerConfiguration>
+  <!-- This specifies the XML configuration for the ServerManager defining the
+       proxies, etc. -->
+  <ProxyGroup name="sources">
+  <SourceProxy name="PETScCGNSReader" class="vtkPETScCGNSReader" label="PETScCGNSReader">
+   <Documentation
+      long_help="Long help"
+      short_help="Short help">
+        Description
+   </Documentation>
+     <StringVectorProperty
+        name="FileName"
+        animateable="0"
+        command="SetFileName"
+        number_of_elements="1"
+        panel_visibility="never">
+        <FileListDomain name="files"/>
+        <Documentation>
+          This property specifies the file name for the reader.
+        </Documentation>
+     </StringVectorProperty>
+
+     <Hints>
+      <ReaderFactory extensions="cgns"
+                     file_description="PETScCGNSReader Files" />
+     </Hints>
+   </SourceProxy>
+  </ProxyGroup>
+</ServerManagerConfiguration>
