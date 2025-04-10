@@ -9,6 +9,10 @@ find_package(VTK
     CommonDataModel
     IOXML
 )
+
+include(FindPkgConfig)
+pkg_check_modules(PETSc REQUIRED IMPORTED_TARGET petsc)
+
 if (NOT VTK_FOUND)
   message("Skipping example: ${VTK_NOT_FOUND_MESSAGE}")
   return ()
@@ -21,11 +25,6 @@ MESSAGE(STATUS "CMAKE_CXX_COMPILER: " ${CMAKE_CXX_COMPILER})
 MESSAGE(STATUS "PETSC LIB : " ${PETSCLIB})
 MESSAGE(STATUS "PETSC INCLUDE : " ${PETSCINC})
 
-add_executable(HelloWorld HelloWorld.cpp)
+add_executable(HelloWorld helloworld.cpp)
 
-target_include_directories(HelloWorld PRIVATE ${PETSCINC})
-target_include_directories(HelloWorld PRIVATE "/Users/berk.geveci/Work/petsc/build-main/include")
-
-target_link_libraries(HelloWorld ${PETSCLIB})
-target_link_libraries(HelloWorld ${MPI_CXX_LIBRARIES})
-target_link_libraries(HelloWorld ${VTK_LIBRARIES})
+target_link_libraries(HelloWorld PRIVATE PkgConfig::PETSc ${MPI_CXX_LIBRARIES} ${VTK_LIBRARIES})
