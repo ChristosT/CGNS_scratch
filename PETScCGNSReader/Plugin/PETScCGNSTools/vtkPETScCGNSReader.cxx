@@ -13,12 +13,16 @@
 #include <vtkUnstructuredGrid.h>
 #include <vtkUnstructuredGridAlgorithm.h>
 
+#define VTK_HANDLE_PETSC_CODE
+
 #if !defined(CGNS_ENUMT)
 #define CGNS_ENUMT(a) a
 #endif
 #if !defined(CGNS_ENUMV)
 #define CGNS_ENUMV(a) a
 #endif
+  
+static int PETSC_SCHWARZ_COUNTER = 0;
 // Permute plex closure ordering to CGNS
 static PetscErrorCode
 DMPlexCGNSGetPermutation_Internal(DMPolytopeType cell_type,
@@ -185,11 +189,33 @@ DMPlexCGNSGetPermutation_Internal(DMPolytopeType cell_type,
 
 class vtkPETScCGNSReader::vtkInternals {
 public:
+  // hold pointers to objects we need to clear
+  PetscViewer viewer;
+  Vec local_sln, global_sln;
+  PetscScalar *slnArray = {nullptr};
+  DM* dm = {nullptr};
+
+
+  void clear() {
+    PetscViewerDestroy(&this->viewer);
+    VecRestoreArray(this->local_sln, &this->slnArray);
+    if(this->dm)
+    {
+      DMRestoreLocalVector(*dm, &local_sln);
+      DMRestoreGlobalVector(*dm, &global_sln);
+    }
+    this->dm = nullptr;
+  }
+
+  ~vtkInternals()
+  {
+    this->clear();
+  }
+
   vtkSmartPointer<vtkDoubleArray> LoadSolution(const char *fileName, DM *dm) {
     MPI_Comm comm = PETSC_COMM_WORLD;
+    this->dm = dm;
 
-    Vec local_sln, V;
-    PetscViewer viewer;
     PetscReal time;
     PetscBool set;
 
@@ -206,32 +232,29 @@ public:
 
     // Load solution from CGNS file
     PetscViewerCGNSOpen(comm, fileName, FILE_MODE_READ, &viewer);
-    DMGetGlobalVector(*dm, &V);
+    DMGetGlobalVector(*dm, &global_sln);
     PetscViewerCGNSSetSolutionIndex(viewer, -1);
     PetscInt idx;
     // PetscViewerCGNSGetSolutionName(viewer, &name);
     PetscViewerCGNSGetSolutionTime(viewer, &time, &set);
-    VecLoad(V, viewer);
-    PetscViewerDestroy(&viewer);
+    VecLoad(global_sln, viewer);
 
     DMGetLocalVector(*dm, &local_sln);
 
     // Transfer data from global vector to local vector (with ghost points)
-    DMGlobalToLocalBegin(*dm, V, INSERT_VALUES, local_sln);
-    DMGlobalToLocalEnd(*dm, V, INSERT_VALUES, local_sln);
+    DMGlobalToLocalBegin(*dm, global_sln, INSERT_VALUES, local_sln);
+    DMGlobalToLocalEnd(*dm, global_sln, INSERT_VALUES, local_sln);
 
     PetscInt lsize;
     VecGetLocalSize(local_sln, &lsize);
 
-    vtkSmartPointer<vtkDoubleArray> fields =
-        vtkSmartPointer<vtkDoubleArray>::New();
+    auto fields = vtkSmartPointer<vtkDoubleArray>::New();
     fields->SetName("fields");
     fields->SetNumberOfComponents(5);
     fields->SetNumberOfTuples(lsize / 5);
-    PetscScalar *slnArray;
     VecGetArray(local_sln, &slnArray);
     memcpy(fields->GetPointer(0), slnArray, lsize * sizeof(double));
-    VecRestoreArray(local_sln, &slnArray);
+    this->clear();
 
     return fields;
   }
@@ -243,9 +266,24 @@ vtkPETScCGNSReader::vtkPETScCGNSReader() {
   this->SetNumberOfInputPorts(0);
   this->SetNumberOfOutputPorts(1);
   this->Internals = std::make_unique<vtkPETScCGNSReader::vtkInternals>();
+
+  // needs update if multithreaded
+  if(PETSC_SCHWARZ_COUNTER == 0)
+  {
+    PetscOptionsSetValue(NULL, "-dm_plex_cgns_parallel", "1");
+    PetscInitializeNoArguments();
+  }
+  PETSC_SCHWARZ_COUNTER++;
+
 }
 
-vtkPETScCGNSReader::~vtkPETScCGNSReader() {}
+vtkPETScCGNSReader::~vtkPETScCGNSReader(){ 
+  PETSC_SCHWARZ_COUNTER--;
+  if(PETSC_SCHWARZ_COUNTER == 0)
+  {
+    PetscFinalize();
+  }
+}
 
 void vtkPETScCGNSReader::PrintSelf(ostream &os, vtkIndent indent) {}
 
@@ -253,13 +291,10 @@ int vtkPETScCGNSReader::RequestData(
     vtkInformation *vtkNotUsed(request),
     vtkInformationVector **vtkNotUsed(inputVector),
     vtkInformationVector *outputVector) {
-  PetscOptionsSetValue(NULL, "-dm_plex_cgns_parallel", "1");
-  PetscInitializeNoArguments();
 
   vtkInformation *outInfo = outputVector->GetInformationObject(0);
   // get the output
   vtkUnstructuredGrid *grid = vtkUnstructuredGrid::GetData(outInfo);
-
   MPI_Comm comm = PETSC_COMM_WORLD;
   int rank = -1;
   int size = -1;
