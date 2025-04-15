@@ -18,14 +18,40 @@
 #include "vtkUnstructuredGrid.h"
 #include "vtkUnstructuredGridAlgorithm.h"
 
-#define VTK_HANDLE_PETSC_CODE
-
 #if !defined(CGNS_ENUMT)
 #define CGNS_ENUMT(a) a
 #endif
 #if !defined(CGNS_ENUMV)
 #define CGNS_ENUMV(a) a
 #endif
+
+// PetscCall returns 0 oin success which is opposite to VTK convention. So we create this wrapper
+#define VTKPetscCall(...)                                                                          \
+  do                                                                                               \
+  {                                                                                                \
+    PetscErrorCode ierr_petsc_call_q_;                                                             \
+    PetscStackUpdateLine;                                                                          \
+    ierr_petsc_call_q_ = __VA_ARGS__;                                                              \
+    if (PetscUnlikely(ierr_petsc_call_q_ != PETSC_SUCCESS))                                        \
+    {                                                                                              \
+      (void)PetscError(PETSC_COMM_SELF, __LINE__, PETSC_FUNCTION_NAME, __FILE__,                   \
+        ierr_petsc_call_q_, PETSC_ERROR_REPEAT, " ");                                              \
+      return EXIT_FAILURE;                                                                         \
+    }                                                                                              \
+  } while (0)
+
+#define VTKPetscCallNoReturnValue(...)                                                             \
+  do                                                                                               \
+  {                                                                                                \
+    PetscErrorCode ierr_petsc_call_q_;                                                             \
+    PetscStackUpdateLine;                                                                          \
+    ierr_petsc_call_q_ = __VA_ARGS__;                                                              \
+    if (PetscUnlikely(ierr_petsc_call_q_ != PETSC_SUCCESS))                                        \
+    {                                                                                              \
+      (void)PetscError(PETSC_COMM_SELF, __LINE__, PETSC_FUNCTION_NAME, __FILE__,                   \
+        ierr_petsc_call_q_, PETSC_ERROR_REPEAT, " ");                                              \
+    }                                                                                              \
+  } while (0)
 
 // Permute plex closure ordering to CGNS
 static PetscErrorCode DMPlexCGNSGetPermutation_Internal(
@@ -316,7 +342,7 @@ vtkPETScCGNSReader::~vtkPETScCGNSReader()
 void vtkPETScCGNSReader::PrintSelf(ostream& os, vtkIndent indent)
 {
   this->Superclass::PrintSelf(os, indent);
-  os << indent << "FileName:"  << this->FileName << endl;
+  os << indent << "FileName:" << this->FileName << endl;
   os << indent << "Controller: " << this->Controller << endl;
 }
 
@@ -351,47 +377,47 @@ int vtkPETScCGNSReader::RequestData(vtkInformation* vtkNotUsed(request),
 
   PetscErrorCode error;
 
-  error =
-    DMPlexCreateFromFile(PETSC_COMM_WORLD, this->FileName.c_str(), "ex16_plex", PETSC_TRUE, &dm);
+  VTKPetscCall(
+    DMPlexCreateFromFile(PETSC_COMM_WORLD, this->FileName.c_str(), "ex16_plex", PETSC_TRUE, &dm));
 
-  PetscCall(DMSetUp(dm));
-  PetscCall(DMSetFromOptions(dm));
+  VTKPetscCall(DMSetUp(dm));
+  VTKPetscCall(DMSetFromOptions(dm));
 
   PetscFE fe_natural;
   PetscDualSpace dual_space_natural;
 
-  PetscCall(DMGetField(dm, 0, NULL, (PetscObject*)&fe_natural));
-  PetscCall(PetscFEGetDualSpace(fe_natural, &dual_space_natural));
-  PetscCall(PetscDualSpaceGetOrder(dual_space_natural, &degree));
-  PetscCall(DMClearFields(dm));
-  PetscCall(DMSetLocalSection(dm, NULL));
+  VTKPetscCall(DMGetField(dm, 0, NULL, (PetscObject*)&fe_natural));
+  VTKPetscCall(PetscFEGetDualSpace(fe_natural, &dual_space_natural));
+  VTKPetscCall(PetscDualSpaceGetOrder(dual_space_natural, &degree));
+  VTKPetscCall(DMClearFields(dm));
+  VTKPetscCall(DMSetLocalSection(dm, NULL));
 
-  PetscCall(DMGetDimension(dm, &dim));
+  VTKPetscCall(DMGetDimension(dm, &dim));
 
   PetscInt cStart, cEnd;
-  PetscCall(DMPlexGetHeightStratum(dm, 0, &cStart, &cEnd));
+  VTKPetscCall(DMPlexGetHeightStratum(dm, 0, &cStart, &cEnd));
 
   DMPolytopeType cell_type;
 
   PetscFE fe;
-  PetscCall(DMPlexGetCellType(dm, cStart, &cell_type));
-  PetscCall(
+  VTKPetscCall(DMPlexGetCellType(dm, cStart, &cell_type));
+  VTKPetscCall(
     PetscFECreateLagrangeByCell(PETSC_COMM_SELF, dim, 5, cell_type, degree, PETSC_DETERMINE, &fe));
-  PetscCall(PetscObjectSetName((PetscObject)fe, "FE for VecLoad"));
-  PetscCall(DMAddField(dm, NULL, (PetscObject)fe));
-  PetscCall(DMCreateDS(dm));
-  PetscCall(PetscFEDestroy(&fe));
+  VTKPetscCall(PetscObjectSetName((PetscObject)fe, "FE for VecLoad"));
+  VTKPetscCall(DMAddField(dm, NULL, (PetscObject)fe));
+  VTKPetscCall(DMCreateDS(dm));
+  VTKPetscCall(PetscFEDestroy(&fe));
 
-  PetscCall(DMGetCoordinatesLocal(dm, &coords_loc));
-  PetscCall(DMGetCoordinateDim(dm, &coords_dim));
-  PetscCall(VecGetLocalSize(coords_loc, &coords_loc_size));
+  VTKPetscCall(DMGetCoordinatesLocal(dm, &coords_loc));
+  VTKPetscCall(DMGetCoordinateDim(dm, &coords_dim));
+  VTKPetscCall(VecGetLocalSize(coords_loc, &coords_loc_size));
 
   auto num_local_nodes = coords_loc_size / coords_dim;
 
   vtkNew<vtkDoubleArray> pts_array;
   pts_array->SetNumberOfComponents(3);
   const double* pts_ptr;
-  PetscCall(VecGetArrayRead(coords_loc, &pts_ptr));
+  VTKPetscCall(VecGetArrayRead(coords_loc, &pts_ptr));
   double* pts_copy = new double[coords_loc_size];
   memcpy(pts_copy, pts_ptr, coords_loc_size * sizeof(double));
   pts_array->SetArray(pts_copy, coords_loc_size, 0, vtkAbstractArray::VTK_DATA_ARRAY_DELETE);
@@ -403,10 +429,10 @@ int vtkPETScCGNSReader::RequestData(vtkInformation* vtkNotUsed(request),
   PetscInt closure_dof, *closure_indices, elem_size;
 
   DM cdm;
-  PetscCall(DMGetCoordinateDM(dm, &cdm));
+  VTKPetscCall(DMGetCoordinateDM(dm, &cdm));
 
-  PetscCall(DMPlexGetClosureIndices(cdm, cdm->localSection, cdm->localSection, cStart, PETSC_FALSE,
-    &closure_dof, &closure_indices, NULL, NULL));
+  VTKPetscCall(DMPlexGetClosureIndices(cdm, cdm->localSection, cdm->localSection, cStart,
+    PETSC_FALSE, &closure_dof, &closure_indices, NULL, NULL));
   DMPlexRestoreClosureIndices(cdm, cdm->localSection, cdm->localSection, cStart, PETSC_FALSE,
     &closure_dof, &closure_indices, NULL, NULL);
 
@@ -460,13 +486,13 @@ int vtkPETScCGNSReader::RequestData(vtkInformation* vtkNotUsed(request),
   }
 
   grid->SetCells(cellTypes, cells);
+  PetscInt tmpids[VTK_CELL_SIZE];
   for (PetscInt cid = cStart, cid0 = 0; cid < cEnd; cid++, cid0++)
   {
-    PetscCall(DMPlexGetClosureIndices(cdm, cdm->localSection, cdm->localSection, cid, PETSC_FALSE,
-      &closure_dof, &closure_indices, NULL, NULL));
+    VTKPetscCall(DMPlexGetClosureIndices(cdm, cdm->localSection, cdm->localSection, cid,
+      PETSC_FALSE, &closure_dof, &closure_indices, NULL, NULL));
     const int* perm;
-    PetscCall(DMPlexCGNSGetPermutation_Internal(cell_type, cSize, &perm));
-    PetscInt* tmpids = new PetscInt[cSize];
+    VTKPetscCall(DMPlexCGNSGetPermutation_Internal(cell_type, cSize, &perm));
     for (int i = 0; i < cSize; i++)
     {
       tmpids[i] = closure_indices[perm[i] * coords_dim] / coords_dim;
