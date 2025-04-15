@@ -27,7 +27,6 @@
 #define CGNS_ENUMV(a) a
 #endif
 
-static int PETSC_SCHWARZ_COUNTER = 0;
 // Permute plex closure ordering to CGNS
 static PetscErrorCode DMPlexCGNSGetPermutation_Internal(
   DMPolytopeType cell_type, PetscInt closure_size, const int** perm)
