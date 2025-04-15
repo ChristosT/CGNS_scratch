@@ -313,7 +313,12 @@ vtkPETScCGNSReader::~vtkPETScCGNSReader()
   this->SetController(nullptr);
 }
 
-void vtkPETScCGNSReader::PrintSelf(ostream& os, vtkIndent indent) {}
+void vtkPETScCGNSReader::PrintSelf(ostream& os, vtkIndent indent)
+{
+  this->Superclass::PrintSelf(os, indent);
+  os << indent << "FileName:"  << this->FileName << endl;
+  os << indent << "Controller: " << this->Controller << endl;
+}
 
 int vtkPETScCGNSReader::RequestInformation(
   vtkInformation* request, vtkInformationVector** inputVector, vtkInformationVector* outputVector)
