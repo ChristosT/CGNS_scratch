@@ -353,6 +353,12 @@ int vtkPETScCGNSReader::RequestInformation(
   return 1;
 }
 
+struct DMHolder
+{
+  DM dm;
+  ~DMHolder() { VTKPetscCallNoReturnValue(DMDestroy(&dm)); }
+};
+
 int vtkPETScCGNSReader::RequestData(vtkInformation* vtkNotUsed(request),
   vtkInformationVector** vtkNotUsed(inputVector), vtkInformationVector* outputVector)
 {
@@ -366,7 +372,9 @@ int vtkPETScCGNSReader::RequestData(vtkInformation* vtkNotUsed(request),
   int rank = this->Controller->GetLocalProcessId();
   int size = this->Controller->GetNumberOfProcesses();
 
-  DM dm;
+  DMHolder dmHolder;
+
+  DM& dm = dmHolder.dm;
   Vec coords_loc, local_sln, V;
   PetscInt coords_loc_size, coords_dim;
   PetscInt degree, dim;
@@ -508,8 +516,6 @@ int vtkPETScCGNSReader::RequestData(vtkInformation* vtkNotUsed(request),
   vtkSmartPointer<vtkDoubleArray> fields =
     this->Internals->LoadSolution(this->FileName.c_str(), &dm);
   grid->GetPointData()->AddArray(fields);
-
-  PetscCall(DMDestroy(&dm));
 
   return 1;
 }
