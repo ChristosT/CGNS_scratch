@@ -4,7 +4,12 @@
 #include <petscdmplex.h>
 
 #include <vtkDoubleArray.h>
+#include <vtkInformation.h>
 #include <vtkInformationVector.h>
+#include <vtkMPI.h>
+#include <vtkMPICommunicator.h>
+#include <vtkMPIController.h>
+#include <vtkMultiProcessController.h>
 #include <vtkNew.h>
 #include <vtkObjectFactory.h>
 #include <vtkPETScCGNSReader.h>
@@ -195,8 +200,11 @@ public:
   Vec local_sln, global_sln;
   PetscScalar* slnArray = { nullptr };
   DM* dm = { nullptr };
+  vtkPETScCGNSReader* Parent;
 
-  void clear()
+  static int petsc_schwarz_counter;
+
+  void Clear()
   {
     PetscViewerDestroy(&this->viewer);
     VecRestoreArray(this->local_sln, &this->slnArray);
@@ -208,7 +216,36 @@ public:
     this->dm = nullptr;
   }
 
-  ~vtkInternals() { this->clear(); }
+  void Initialize()
+  {
+    if (this->petsc_schwarz_counter == 0)
+    {
+      // PETSC_COMM_WORLD needs to be set before PetscInitializeNoArguments so
+      // that it uses the proper communicator
+      if (vtkMPIController* mpiController =
+            vtkMPIController::SafeDownCast(this->Parent->GetController()))
+      {
+        vtkMPICommunicator* mpiCommunicator =
+          vtkMPICommunicator::SafeDownCast(mpiController->GetCommunicator());
+        assert(mpiCommunicator);
+        PETSC_COMM_WORLD = *mpiCommunicator->GetMPIComm()->GetHandle();
+      }
+      PetscOptionsSetValue(NULL, "-dm_plex_cgns_parallel", "1");
+      PetscInitializeNoArguments();
+    }
+    this->petsc_schwarz_counter++;
+  }
+
+  vtkInternals(vtkPETScCGNSReader* parent) { this->Parent = parent; }
+
+  ~vtkInternals()
+  {
+    this->petsc_schwarz_counter--;
+    if (this->petsc_schwarz_counter == 0)
+    {
+      PetscFinalize();
+    }
+  }
 
   vtkSmartPointer<vtkDoubleArray> LoadSolution(const char* fileName, DM* dm)
   {
@@ -253,52 +290,51 @@ public:
     fields->SetNumberOfTuples(lsize / 5);
     VecGetArray(local_sln, &slnArray);
     memcpy(fields->GetPointer(0), slnArray, lsize * sizeof(double));
-    this->clear();
+    this->Clear();
 
     return fields;
   }
 };
+int vtkPETScCGNSReader::vtkInternals::petsc_schwarz_counter = 0;
 
 vtkStandardNewMacro(vtkPETScCGNSReader);
 
 vtkPETScCGNSReader::vtkPETScCGNSReader()
+  : Controller(nullptr)
 {
   this->SetNumberOfInputPorts(0);
   this->SetNumberOfOutputPorts(1);
-  this->Internals = std::make_unique<vtkPETScCGNSReader::vtkInternals>();
-
-  // needs update if multithreaded
-  if (PETSC_SCHWARZ_COUNTER == 0)
-  {
-    PetscOptionsSetValue(NULL, "-dm_plex_cgns_parallel", "1");
-    PetscInitializeNoArguments();
-  }
-  PETSC_SCHWARZ_COUNTER++;
+  this->Internals = std::make_unique<vtkPETScCGNSReader::vtkInternals>(this);
+  this->SetController(vtkMultiProcessController::GetGlobalController());
 }
+vtkCxxSetObjectMacro(vtkPETScCGNSReader, Controller, vtkMultiProcessController);
 
 vtkPETScCGNSReader::~vtkPETScCGNSReader()
 {
-  PETSC_SCHWARZ_COUNTER--;
-  if (PETSC_SCHWARZ_COUNTER == 0)
-  {
-    PetscFinalize();
-  }
+  this->SetController(nullptr);
 }
 
 void vtkPETScCGNSReader::PrintSelf(ostream& os, vtkIndent indent) {}
+
+int vtkPETScCGNSReader::RequestInformation(
+  vtkInformation* request, vtkInformationVector** inputVector, vtkInformationVector* outputVector)
+{
+  outputVector->GetInformationObject(0)->Set(CAN_HANDLE_PIECE_REQUEST(), 1);
+  return 1;
+}
 
 int vtkPETScCGNSReader::RequestData(vtkInformation* vtkNotUsed(request),
   vtkInformationVector** vtkNotUsed(inputVector), vtkInformationVector* outputVector)
 {
 
+  this->Internals->Initialize();
+
   vtkInformation* outInfo = outputVector->GetInformationObject(0);
   // get the output
   vtkUnstructuredGrid* grid = vtkUnstructuredGrid::GetData(outInfo);
   MPI_Comm comm = PETSC_COMM_WORLD;
-  int rank = -1;
-  int size = -1;
-  MPI_Comm_rank(comm, &rank);
-  MPI_Comm_size(comm, &size);
+  int rank = this->Controller->GetLocalProcessId();
+  int size = this->Controller->GetNumberOfProcesses();
 
   DM dm;
   Vec coords_loc, local_sln, V;

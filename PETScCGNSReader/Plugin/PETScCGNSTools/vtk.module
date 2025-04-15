@@ -5,4 +5,4 @@ DEPENDS
   VTK::CommonExecutionModel
 PRIVATE_DEPENDS
   PkgConfig::PETSc
-  MPI::MPI_C
+  VTK::ParallelMPI
