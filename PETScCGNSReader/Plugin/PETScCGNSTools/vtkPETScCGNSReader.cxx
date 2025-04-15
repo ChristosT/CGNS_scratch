@@ -36,7 +36,7 @@
     {                                                                                              \
       (void)PetscError(PETSC_COMM_SELF, __LINE__, PETSC_FUNCTION_NAME, __FILE__,                   \
         ierr_petsc_call_q_, PETSC_ERROR_REPEAT, " ");                                              \
-      return EXIT_FAILURE;                                                                         \
+      return 0;                                                                                    \
     }                                                                                              \
   } while (0)
 
@@ -231,12 +231,12 @@ public:
 
   void Clear()
   {
-    PetscViewerDestroy(&this->viewer);
-    VecRestoreArray(this->local_sln, &this->slnArray);
+    VTKPetscCallNoReturnValue(PetscViewerDestroy(&this->viewer));
+    VTKPetscCallNoReturnValue(VecRestoreArray(this->local_sln, &this->slnArray));
     if (this->dm)
     {
-      DMRestoreLocalVector(*dm, &local_sln);
-      DMRestoreGlobalVector(*dm, &global_sln);
+      VTKPetscCallNoReturnValue(DMRestoreLocalVector(*dm, &local_sln));
+      VTKPetscCallNoReturnValue(DMRestoreGlobalVector(*dm, &global_sln));
     }
     this->dm = nullptr;
   }
@@ -272,7 +272,7 @@ public:
     }
   }
 
-  vtkSmartPointer<vtkDoubleArray> LoadSolution(const char* fileName, DM* dm)
+  int LoadSolution(const char* fileName, DM* dm, vtkSmartPointer<vtkDoubleArray> fields)
   {
     MPI_Comm comm = PETSC_COMM_WORLD;
     this->dm = dm;
@@ -282,42 +282,42 @@ public:
 
     // Set section component names, used when writing out CGNS files
     PetscSection section;
-    DMGetLocalSection(*dm, &section);
+    VTKPetscCall(DMGetLocalSection(*dm, &section));
 
-    PetscSectionSetFieldName(section, 0, "");
-    PetscSectionSetComponentName(section, 0, 0, "Pressure");
-    PetscSectionSetComponentName(section, 0, 1, "VelocityX");
-    PetscSectionSetComponentName(section, 0, 2, "VelocityY");
-    PetscSectionSetComponentName(section, 0, 3, "VelocityZ");
-    PetscSectionSetComponentName(section, 0, 4, "Temperature");
+    VTKPetscCall(PetscSectionSetFieldName(section, 0, ""));
+    VTKPetscCall(PetscSectionSetComponentName(section, 0, 0, "Pressure"));
+    VTKPetscCall(PetscSectionSetComponentName(section, 0, 1, "VelocityX"));
+    VTKPetscCall(PetscSectionSetComponentName(section, 0, 2, "VelocityY"));
+    VTKPetscCall(PetscSectionSetComponentName(section, 0, 3, "VelocityZ"));
+    VTKPetscCall(PetscSectionSetComponentName(section, 0, 4, "Temperature"));
 
     // Load solution from CGNS file
-    PetscViewerCGNSOpen(comm, fileName, FILE_MODE_READ, &viewer);
-    DMGetGlobalVector(*dm, &global_sln);
-    PetscViewerCGNSSetSolutionIndex(viewer, -1);
+    VTKPetscCall(PetscViewerCGNSOpen(comm, fileName, FILE_MODE_READ, &viewer));
+    VTKPetscCall(DMGetGlobalVector(*dm, &global_sln));
+    VTKPetscCall(PetscViewerCGNSSetSolutionIndex(viewer, -1));
     PetscInt idx;
     // PetscViewerCGNSGetSolutionName(viewer, &name);
-    PetscViewerCGNSGetSolutionTime(viewer, &time, &set);
-    VecLoad(global_sln, viewer);
+    VTKPetscCall(PetscViewerCGNSGetSolutionTime(viewer, &time, &set));
+    VTKPetscCall(VecLoad(global_sln, viewer));
 
-    DMGetLocalVector(*dm, &local_sln);
+    VTKPetscCall(DMGetLocalVector(*dm, &local_sln));
 
     // Transfer data from global vector to local vector (with ghost points)
-    DMGlobalToLocalBegin(*dm, global_sln, INSERT_VALUES, local_sln);
-    DMGlobalToLocalEnd(*dm, global_sln, INSERT_VALUES, local_sln);
+    VTKPetscCall(DMGlobalToLocalBegin(*dm, global_sln, INSERT_VALUES, local_sln));
+    VTKPetscCall(DMGlobalToLocalEnd(*dm, global_sln, INSERT_VALUES, local_sln));
 
     PetscInt lsize;
-    VecGetLocalSize(local_sln, &lsize);
+    VTKPetscCall(VecGetLocalSize(local_sln, &lsize));
 
-    auto fields = vtkSmartPointer<vtkDoubleArray>::New();
     fields->SetName("fields");
     fields->SetNumberOfComponents(5);
     fields->SetNumberOfTuples(lsize / 5);
-    VecGetArray(local_sln, &slnArray);
+
+    VTKPetscCall(VecGetArray(local_sln, &slnArray));
     memcpy(fields->GetPointer(0), slnArray, lsize * sizeof(double));
     this->Clear();
 
-    return fields;
+    return 1;
   }
 };
 int vtkPETScCGNSReader::vtkInternals::petsc_schwarz_counter = 0;
@@ -383,8 +383,6 @@ int vtkPETScCGNSReader::RequestData(vtkInformation* vtkNotUsed(request),
   PetscReal time;
   PetscBool set;
 
-  PetscErrorCode error;
-
   VTKPetscCall(
     DMPlexCreateFromFile(PETSC_COMM_WORLD, this->FileName.c_str(), "ex16_plex", PETSC_TRUE, &dm));
 
@@ -429,7 +427,7 @@ int vtkPETScCGNSReader::RequestData(vtkInformation* vtkNotUsed(request),
   double* pts_copy = new double[coords_loc_size];
   memcpy(pts_copy, pts_ptr, coords_loc_size * sizeof(double));
   pts_array->SetArray(pts_copy, coords_loc_size, 0, vtkAbstractArray::VTK_DATA_ARRAY_DELETE);
-  VecRestoreArrayRead(coords_loc, &pts_ptr);
+  VTKPetscCall(VecRestoreArrayRead(coords_loc, &pts_ptr));
   vtkNew<vtkPoints> pts;
   pts->SetData(pts_array.GetPointer());
   grid->SetPoints(pts.GetPointer());
@@ -441,10 +439,10 @@ int vtkPETScCGNSReader::RequestData(vtkInformation* vtkNotUsed(request),
 
   VTKPetscCall(DMPlexGetClosureIndices(cdm, cdm->localSection, cdm->localSection, cStart,
     PETSC_FALSE, &closure_dof, &closure_indices, NULL, NULL));
-  DMPlexRestoreClosureIndices(cdm, cdm->localSection, cdm->localSection, cStart, PETSC_FALSE,
-    &closure_dof, &closure_indices, NULL, NULL);
-
   PetscInt cSize = closure_dof / coords_dim;
+  VTKPetscCall(DMPlexRestoreClosureIndices(cdm, cdm->localSection, cdm->localSection, cStart,
+    PETSC_FALSE, &closure_dof, &closure_indices, NULL, NULL));
+
   PetscInt nCells = cEnd - cStart;
 
   vtkNew<vtkIdTypeArray> connectivity;
@@ -509,13 +507,13 @@ int vtkPETScCGNSReader::RequestData(vtkInformation* vtkNotUsed(request),
     {
       connectivity->SetValue(cid0 * cSize + i, tmpids[translator[i]]);
     }
-    DMPlexRestoreClosureIndices(cdm, cdm->localSection, cdm->localSection, 0, PETSC_FALSE,
-      &closure_dof, &closure_indices, NULL, NULL);
+    VTKPetscCall(DMPlexRestoreClosureIndices(cdm, cdm->localSection, cdm->localSection, 0,
+      PETSC_FALSE, &closure_dof, &closure_indices, NULL, NULL));
   }
 
-  vtkSmartPointer<vtkDoubleArray> fields =
-    this->Internals->LoadSolution(this->FileName.c_str(), &dm);
+  vtkSmartPointer<vtkDoubleArray> fields = vtkSmartPointer<vtkDoubleArray>::New();
+  int success = this->Internals->LoadSolution(this->FileName.c_str(), &dm, fields);
   grid->GetPointData()->AddArray(fields);
 
-  return 1;
+  return success;
 }
