@@ -221,8 +221,9 @@ class vtkPETScCGNSReader::vtkInternals
 {
 public:
   // hold pointers to objects we need to clear
-  PetscViewer viewer;
-  Vec local_sln, global_sln;
+  PetscViewer viewer = { nullptr };
+  Vec local_sln = { nullptr };
+  Vec global_sln = { nullptr };
   PetscScalar* slnArray = { nullptr };
   DM* dm = { nullptr };
   vtkPETScCGNSReader* Parent;
@@ -231,12 +232,28 @@ public:
 
   void Clear()
   {
-    VTKPetscCallNoReturnValue(PetscViewerDestroy(&this->viewer));
-    VTKPetscCallNoReturnValue(VecRestoreArray(this->local_sln, &this->slnArray));
+    if (this->viewer)
+    {
+      VTKPetscCallNoReturnValue(PetscViewerDestroy(&this->viewer));
+      this->viewer = nullptr;
+    }
+    if (this->slnArray)
+    {
+      VTKPetscCallNoReturnValue(VecRestoreArray(this->local_sln, &this->slnArray));
+      this->slnArray = nullptr;
+    }
     if (this->dm)
     {
-      VTKPetscCallNoReturnValue(DMRestoreLocalVector(*dm, &local_sln));
-      VTKPetscCallNoReturnValue(DMRestoreGlobalVector(*dm, &global_sln));
+      if (this->local_sln)
+      {
+        VTKPetscCallNoReturnValue(DMRestoreLocalVector(*dm, &local_sln));
+        this->local_sln = nullptr;
+      }
+      if (this->global_sln)
+      {
+        VTKPetscCallNoReturnValue(DMRestoreGlobalVector(*dm, &global_sln));
+        this->global_sln = nullptr;
+      }
     }
     this->dm = nullptr;
   }
@@ -265,6 +282,7 @@ public:
 
   ~vtkInternals()
   {
+    this->Clear();
     this->petsc_schwarz_counter--;
     if (this->petsc_schwarz_counter == 0)
     {
@@ -353,10 +371,32 @@ int vtkPETScCGNSReader::RequestInformation(
   return 1;
 }
 
+// Use holders for Petsc pointers to guarantee clean up in case of a VTKPetscCall failure
 struct DMHolder
 {
-  DM dm;
-  ~DMHolder() { VTKPetscCallNoReturnValue(DMDestroy(&dm)); }
+  DM dm = { nullptr };
+  ~DMHolder()
+  {
+    if (dm)
+    {
+      VTKPetscCallNoReturnValue(DMDestroy(&dm));
+      dm = nullptr;
+    }
+  }
+};
+
+struct VecHolder
+{
+  Vec vec = { nullptr };
+  const double* ptr{ nullptr };
+  ~VecHolder()
+  {
+    if (vec)
+    {
+      VTKPetscCallNoReturnValue(VecRestoreArrayRead(vec, &ptr));
+      vec = nullptr;
+    }
+  }
 };
 
 int vtkPETScCGNSReader::RequestData(vtkInformation* vtkNotUsed(request),
@@ -366,19 +406,18 @@ int vtkPETScCGNSReader::RequestData(vtkInformation* vtkNotUsed(request),
   this->Internals->Initialize();
 
   vtkInformation* outInfo = outputVector->GetInformationObject(0);
-  // get the output
   vtkUnstructuredGrid* grid = vtkUnstructuredGrid::GetData(outInfo);
-  MPI_Comm comm = PETSC_COMM_WORLD;
   int rank = this->Controller->GetLocalProcessId();
   int size = this->Controller->GetNumberOfProcesses();
 
   DMHolder dmHolder;
+  VecHolder coordsHolder;
 
   DM& dm = dmHolder.dm;
-  Vec coords_loc, local_sln, V;
+  Vec& coords_loc = coordsHolder.vec;
+  const double*& pts_ptr = coordsHolder.ptr;
   PetscInt coords_loc_size, coords_dim;
   PetscInt degree, dim;
-  PetscViewer viewer;
   const char* name;
   PetscReal time;
   PetscBool set;
@@ -422,12 +461,10 @@ int vtkPETScCGNSReader::RequestData(vtkInformation* vtkNotUsed(request),
 
   vtkNew<vtkDoubleArray> pts_array;
   pts_array->SetNumberOfComponents(3);
-  const double* pts_ptr;
   VTKPetscCall(VecGetArrayRead(coords_loc, &pts_ptr));
   double* pts_copy = new double[coords_loc_size];
   memcpy(pts_copy, pts_ptr, coords_loc_size * sizeof(double));
   pts_array->SetArray(pts_copy, coords_loc_size, 0, vtkAbstractArray::VTK_DATA_ARRAY_DELETE);
-  VTKPetscCall(VecRestoreArrayRead(coords_loc, &pts_ptr));
   vtkNew<vtkPoints> pts;
   pts->SetData(pts_array.GetPointer());
   grid->SetPoints(pts.GetPointer());
