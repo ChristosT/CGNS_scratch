@@ -17,12 +17,12 @@
 
 class vtkDoubleArray;
 
-class PETSCCGNSTOOLS_EXPORT vtkPETScCGNSReader
-    : public vtkUnstructuredGridAlgorithm {
+class PETSCCGNSTOOLS_EXPORT vtkPETScCGNSReader : public vtkUnstructuredGridAlgorithm
+{
 public:
-  static vtkPETScCGNSReader *New();
+  static vtkPETScCGNSReader* New();
   vtkTypeMacro(vtkPETScCGNSReader, vtkUnstructuredGridAlgorithm);
-  void PrintSelf(ostream &os, vtkIndent indent) override;
+  void PrintSelf(ostream& os, vtkIndent indent) override;
 
   vtkSetStdStringFromCharMacro(FileName);
   vtkGetCharFromStdStringMacro(FileName);
@@ -30,15 +30,14 @@ public:
 protected:
   std::string FileName;
 
-  int RequestData(vtkInformation *, vtkInformationVector **,
-                  vtkInformationVector *) override;
+  int RequestData(vtkInformation*, vtkInformationVector**, vtkInformationVector*) override;
 
   vtkPETScCGNSReader();
   ~vtkPETScCGNSReader() override;
 
 private:
-  vtkPETScCGNSReader(const vtkPETScCGNSReader &) = delete;
-  void operator=(const vtkPETScCGNSReader &) = delete;
+  vtkPETScCGNSReader(const vtkPETScCGNSReader&) = delete;
+  void operator=(const vtkPETScCGNSReader&) = delete;
 
   class vtkInternals;
   std::unique_ptr<vtkInternals> Internals;
