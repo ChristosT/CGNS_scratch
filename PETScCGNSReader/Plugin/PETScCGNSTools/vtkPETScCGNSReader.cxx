@@ -217,6 +217,7 @@ static PetscErrorCode DMPlexCGNSGetPermutation_Internal(
   PetscFunctionReturn(PETSC_SUCCESS);
 }
 
+//------------------------------------------------------------------------------
 class vtkPETScCGNSReader::vtkInternals
 {
 public:
@@ -230,53 +231,11 @@ public:
 
   static int petsc_schwarz_counter;
 
-  void Clear()
-  {
-    if (this->viewer)
-    {
-      VTKPetscCallNoReturnValue(PetscViewerDestroy(&this->viewer));
-      this->viewer = nullptr;
-    }
-    if (this->slnArray)
-    {
-      VTKPetscCallNoReturnValue(VecRestoreArray(this->local_sln, &this->slnArray));
-      this->slnArray = nullptr;
-    }
-    if (this->dm)
-    {
-      if (this->local_sln)
-      {
-        VTKPetscCallNoReturnValue(DMRestoreLocalVector(*dm, &local_sln));
-        this->local_sln = nullptr;
-      }
-      if (this->global_sln)
-      {
-        VTKPetscCallNoReturnValue(DMRestoreGlobalVector(*dm, &global_sln));
-        this->global_sln = nullptr;
-      }
-    }
-    this->dm = nullptr;
-  }
-
-  void Initialize()
-  {
-    if (this->petsc_schwarz_counter == 0)
-    {
-      // PETSC_COMM_WORLD needs to be set before PetscInitializeNoArguments so
-      // that it uses the proper communicator
-      if (vtkMPIController* mpiController =
-            vtkMPIController::SafeDownCast(this->Parent->GetController()))
-      {
-        vtkMPICommunicator* mpiCommunicator =
-          vtkMPICommunicator::SafeDownCast(mpiController->GetCommunicator());
-        assert(mpiCommunicator);
-        PETSC_COMM_WORLD = *mpiCommunicator->GetMPIComm()->GetHandle();
-      }
-      PetscOptionsSetValue(NULL, "-dm_plex_cgns_parallel", "1");
-      PetscInitializeNoArguments();
-    }
-    this->petsc_schwarz_counter++;
-  }
+  // Release Petsc objects
+  void Clear();
+  // Initialize Petsc. This should be at least in RequestData to make sure we grab the latest
+  // vtkMultiProcessController.
+  void Initialize();
 
   vtkInternals(vtkPETScCGNSReader* parent) { this->Parent = parent; }
 
@@ -289,59 +248,116 @@ public:
       PetscFinalize();
     }
   }
-
-  int LoadSolution(const char* fileName, DM* dm, vtkSmartPointer<vtkDoubleArray> fields)
-  {
-    MPI_Comm comm = PETSC_COMM_WORLD;
-    this->dm = dm;
-
-    PetscReal time;
-    PetscBool set;
-
-    // Set section component names, used when writing out CGNS files
-    PetscSection section;
-    VTKPetscCall(DMGetLocalSection(*dm, &section));
-
-    VTKPetscCall(PetscSectionSetFieldName(section, 0, ""));
-    VTKPetscCall(PetscSectionSetComponentName(section, 0, 0, "Pressure"));
-    VTKPetscCall(PetscSectionSetComponentName(section, 0, 1, "VelocityX"));
-    VTKPetscCall(PetscSectionSetComponentName(section, 0, 2, "VelocityY"));
-    VTKPetscCall(PetscSectionSetComponentName(section, 0, 3, "VelocityZ"));
-    VTKPetscCall(PetscSectionSetComponentName(section, 0, 4, "Temperature"));
-
-    // Load solution from CGNS file
-    VTKPetscCall(PetscViewerCGNSOpen(comm, fileName, FILE_MODE_READ, &viewer));
-    VTKPetscCall(DMGetGlobalVector(*dm, &global_sln));
-    VTKPetscCall(PetscViewerCGNSSetSolutionIndex(viewer, -1));
-    PetscInt idx;
-    // PetscViewerCGNSGetSolutionName(viewer, &name);
-    VTKPetscCall(PetscViewerCGNSGetSolutionTime(viewer, &time, &set));
-    VTKPetscCall(VecLoad(global_sln, viewer));
-
-    VTKPetscCall(DMGetLocalVector(*dm, &local_sln));
-
-    // Transfer data from global vector to local vector (with ghost points)
-    VTKPetscCall(DMGlobalToLocalBegin(*dm, global_sln, INSERT_VALUES, local_sln));
-    VTKPetscCall(DMGlobalToLocalEnd(*dm, global_sln, INSERT_VALUES, local_sln));
-
-    PetscInt lsize;
-    VTKPetscCall(VecGetLocalSize(local_sln, &lsize));
-
-    fields->SetName("fields");
-    fields->SetNumberOfComponents(5);
-    fields->SetNumberOfTuples(lsize / 5);
-
-    VTKPetscCall(VecGetArray(local_sln, &slnArray));
-    memcpy(fields->GetPointer(0), slnArray, lsize * sizeof(double));
-    this->Clear();
-
-    return 1;
-  }
+  // Load solution from fileName amd the accosiated Petsc::DM structure in fields
+  // For name of the fileds are hardcoded and expected to be "Pressure", "VelocityX","VelocityY",
+  // "VelocityZ","Temperature" Returns 1 on success 0 on failure.
+  int LoadSolution(const char* fileName, DM* dm, vtkSmartPointer<vtkDoubleArray> fields);
 };
+//------------------------------------------------------------------------------
+void vtkPETScCGNSReader::vtkInternals::Clear()
+{
+  if (this->viewer)
+  {
+    VTKPetscCallNoReturnValue(PetscViewerDestroy(&this->viewer));
+    this->viewer = nullptr;
+  }
+  if (this->slnArray)
+  {
+    VTKPetscCallNoReturnValue(VecRestoreArray(this->local_sln, &this->slnArray));
+    this->slnArray = nullptr;
+  }
+  if (this->dm)
+  {
+    if (this->local_sln)
+    {
+      VTKPetscCallNoReturnValue(DMRestoreLocalVector(*dm, &local_sln));
+      this->local_sln = nullptr;
+    }
+    if (this->global_sln)
+    {
+      VTKPetscCallNoReturnValue(DMRestoreGlobalVector(*dm, &global_sln));
+      this->global_sln = nullptr;
+    }
+  }
+  this->dm = nullptr;
+}
+//------------------------------------------------------------------------------
+void vtkPETScCGNSReader::vtkInternals::Initialize()
+{
+  if (this->petsc_schwarz_counter == 0)
+  {
+    // PETSC_COMM_WORLD needs to be set before PetscInitializeNoArguments so
+    // that it uses the proper communicator
+    if (vtkMPIController* mpiController =
+          vtkMPIController::SafeDownCast(this->Parent->GetController()))
+    {
+      vtkMPICommunicator* mpiCommunicator =
+        vtkMPICommunicator::SafeDownCast(mpiController->GetCommunicator());
+      assert(mpiCommunicator);
+      PETSC_COMM_WORLD = *mpiCommunicator->GetMPIComm()->GetHandle();
+    }
+    PetscOptionsSetValue(NULL, "-dm_plex_cgns_parallel", "1");
+    PetscInitializeNoArguments();
+  }
+  this->petsc_schwarz_counter++;
+}
+//------------------------------------------------------------------------------
+int vtkPETScCGNSReader::vtkInternals::LoadSolution(
+  const char* fileName, DM* dm, vtkSmartPointer<vtkDoubleArray> fields)
+{
+  MPI_Comm comm = PETSC_COMM_WORLD;
+  this->dm = dm;
+
+  PetscReal time;
+  PetscBool set;
+
+  // Set section component names, used when writing out CGNS files
+  PetscSection section;
+  VTKPetscCall(DMGetLocalSection(*dm, &section));
+
+  VTKPetscCall(PetscSectionSetFieldName(section, 0, ""));
+  VTKPetscCall(PetscSectionSetComponentName(section, 0, 0, "Pressure"));
+  VTKPetscCall(PetscSectionSetComponentName(section, 0, 1, "VelocityX"));
+  VTKPetscCall(PetscSectionSetComponentName(section, 0, 2, "VelocityY"));
+  VTKPetscCall(PetscSectionSetComponentName(section, 0, 3, "VelocityZ"));
+  VTKPetscCall(PetscSectionSetComponentName(section, 0, 4, "Temperature"));
+
+  // Load solution from CGNS file
+  VTKPetscCall(PetscViewerCGNSOpen(comm, fileName, FILE_MODE_READ, &viewer));
+  VTKPetscCall(DMGetGlobalVector(*dm, &global_sln));
+  VTKPetscCall(PetscViewerCGNSSetSolutionIndex(viewer, -1));
+  PetscInt idx;
+  // PetscViewerCGNSGetSolutionName(viewer, &name);
+  VTKPetscCall(PetscViewerCGNSGetSolutionTime(viewer, &time, &set));
+  VTKPetscCall(VecLoad(global_sln, viewer));
+
+  VTKPetscCall(DMGetLocalVector(*dm, &local_sln));
+
+  // Transfer data from global vector to local vector (with ghost points)
+  VTKPetscCall(DMGlobalToLocalBegin(*dm, global_sln, INSERT_VALUES, local_sln));
+  VTKPetscCall(DMGlobalToLocalEnd(*dm, global_sln, INSERT_VALUES, local_sln));
+
+  PetscInt lsize;
+  VTKPetscCall(VecGetLocalSize(local_sln, &lsize));
+
+  fields->SetName("fields");
+  fields->SetNumberOfComponents(5);
+  fields->SetNumberOfTuples(lsize / 5);
+
+  VTKPetscCall(VecGetArray(local_sln, &slnArray));
+  memcpy(fields->GetPointer(0), slnArray, lsize * sizeof(double));
+  this->Clear();
+
+  return 1;
+}
+
+//------------------------------------------------------------------------------
 int vtkPETScCGNSReader::vtkInternals::petsc_schwarz_counter = 0;
 
+//==============================================================================
 vtkStandardNewMacro(vtkPETScCGNSReader);
 
+//------------------------------------------------------------------------------
 vtkPETScCGNSReader::vtkPETScCGNSReader()
   : Controller(nullptr)
 {
@@ -350,13 +366,16 @@ vtkPETScCGNSReader::vtkPETScCGNSReader()
   this->Internals = std::make_unique<vtkPETScCGNSReader::vtkInternals>(this);
   this->SetController(vtkMultiProcessController::GetGlobalController());
 }
+//------------------------------------------------------------------------------
 vtkCxxSetObjectMacro(vtkPETScCGNSReader, Controller, vtkMultiProcessController);
 
+//------------------------------------------------------------------------------
 vtkPETScCGNSReader::~vtkPETScCGNSReader()
 {
   this->SetController(nullptr);
 }
 
+//------------------------------------------------------------------------------
 void vtkPETScCGNSReader::PrintSelf(ostream& os, vtkIndent indent)
 {
   this->Superclass::PrintSelf(os, indent);
@@ -364,12 +383,14 @@ void vtkPETScCGNSReader::PrintSelf(ostream& os, vtkIndent indent)
   os << indent << "Controller: " << this->Controller << endl;
 }
 
+//------------------------------------------------------------------------------
 int vtkPETScCGNSReader::RequestInformation(
   vtkInformation* request, vtkInformationVector** inputVector, vtkInformationVector* outputVector)
 {
   outputVector->GetInformationObject(0)->Set(CAN_HANDLE_PIECE_REQUEST(), 1);
   return 1;
 }
+//------------------------------------------------------------------------------
 
 // Use holders for Petsc pointers to guarantee clean up in case of a VTKPetscCall failure
 struct DMHolder
@@ -554,3 +575,6 @@ int vtkPETScCGNSReader::RequestData(vtkInformation* vtkNotUsed(request),
 
   return success;
 }
+
+#undef VTKPetscCall
+#undef VTKPetscCallNoReturnValue

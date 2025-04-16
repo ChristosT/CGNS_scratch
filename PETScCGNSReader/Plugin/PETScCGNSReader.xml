@@ -6,9 +6,9 @@
   <ProxyGroup name="sources">
   <SourceProxy name="PETScCGNSReader" class="vtkPETScCGNSReader" label="PETScCGNSReader">
    <Documentation
-      long_help="Long help"
-      short_help="Short help">
-        Description
+      long_help="PETScCGNSReader"
+      short_help="PETScCGNSReader">
+      Read a CGNS file written using the  DMPlex structure of PETSc
    </Documentation>
      <StringVectorProperty
         name="FileName"
