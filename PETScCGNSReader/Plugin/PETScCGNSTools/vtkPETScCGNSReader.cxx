@@ -227,32 +227,67 @@ public:
   Vec global_sln = { nullptr };
   PetscScalar* slnArray = { nullptr };
   DM* dm = { nullptr };
-  vtkPETScCGNSReader* Parent;
 
   static int petsc_schwarz_counter;
+  vtkPETScCGNSReader* Parent;
+
+  vtkInternals(vtkPETScCGNSReader* parent, bool forcePetscInitialize = false);
+  ~vtkInternals();
 
   // Release Petsc objects
   void Clear();
-  // Initialize Petsc. This should be at least in RequestData to make sure we grab the latest
-  // vtkMultiProcessController.
-  void Initialize();
 
-  vtkInternals(vtkPETScCGNSReader* parent) { this->Parent = parent; }
-
-  ~vtkInternals()
-  {
-    this->Clear();
-    this->petsc_schwarz_counter--;
-    if (this->petsc_schwarz_counter == 0)
-    {
-      PetscFinalize();
-    }
-  }
   // Load solution from fileName amd the accosiated Petsc::DM structure in fields
   // For name of the fileds are hardcoded and expected to be "Pressure", "VelocityX","VelocityY",
   // "VelocityZ","Temperature" Returns 1 on success 0 on failure.
   int LoadSolution(const char* fileName, DM* dm, vtkSmartPointer<vtkDoubleArray> fields);
 };
+//------------------------------------------------------------------------------
+vtkPETScCGNSReader::vtkInternals::vtkInternals(
+  vtkPETScCGNSReader* parent, bool forcePetscInitialize)
+{
+  assert(parent);
+
+  this->Parent = parent;
+  if (forcePetscInitialize && this->petsc_schwarz_counter != 0)
+  {
+
+    // Avoid "WARNING! There are options you set that were not use" Petsc
+    // message when we create and destroy the reader without actually using it.
+    // This happens currently during the pop-up for readers selection in
+    // ParaView.
+    VTKPetscCallNoReturnValue(PetscOptionsClearValue(NULL, "-dm_plex_cgns_parallel"));
+    VTKPetscCallNoReturnValue(PetscFinalize());
+    this->petsc_schwarz_counter = 0;
+  }
+
+  if (this->petsc_schwarz_counter == 0)
+  {
+
+    // PETSC_COMM_WORLD needs to be set before PetscInitializeNoArguments so
+    // that it uses the proper communicator
+    if (vtkMPIController* mpiController =
+          vtkMPIController::SafeDownCast(this->Parent->GetController()))
+    {
+      vtkMPICommunicator* mpiCommunicator =
+        vtkMPICommunicator::SafeDownCast(mpiController->GetCommunicator());
+      assert(mpiCommunicator);
+      PETSC_COMM_WORLD = *mpiCommunicator->GetMPIComm()->GetHandle();
+    }
+    VTKPetscCallNoReturnValue(PetscOptionsSetValue(NULL, "-dm_plex_cgns_parallel", "1"));
+    VTKPetscCallNoReturnValue(PetscInitializeNoArguments());
+  }
+  this->petsc_schwarz_counter++;
+}
+//------------------------------------------------------------------------------
+vtkPETScCGNSReader::vtkInternals::~vtkInternals()
+{
+  this->petsc_schwarz_counter--;
+  if (this->petsc_schwarz_counter == 0)
+  {
+    VTKPetscCallNoReturnValue(PetscFinalize());
+  }
+}
 //------------------------------------------------------------------------------
 void vtkPETScCGNSReader::vtkInternals::Clear()
 {
@@ -280,26 +315,6 @@ void vtkPETScCGNSReader::vtkInternals::Clear()
     }
   }
   this->dm = nullptr;
-}
-//------------------------------------------------------------------------------
-void vtkPETScCGNSReader::vtkInternals::Initialize()
-{
-  if (this->petsc_schwarz_counter == 0)
-  {
-    // PETSC_COMM_WORLD needs to be set before PetscInitializeNoArguments so
-    // that it uses the proper communicator
-    if (vtkMPIController* mpiController =
-          vtkMPIController::SafeDownCast(this->Parent->GetController()))
-    {
-      vtkMPICommunicator* mpiCommunicator =
-        vtkMPICommunicator::SafeDownCast(mpiController->GetCommunicator());
-      assert(mpiCommunicator);
-      PETSC_COMM_WORLD = *mpiCommunicator->GetMPIComm()->GetHandle();
-    }
-    PetscOptionsSetValue(NULL, "-dm_plex_cgns_parallel", "1");
-    PetscInitializeNoArguments();
-  }
-  this->petsc_schwarz_counter++;
 }
 //------------------------------------------------------------------------------
 int vtkPETScCGNSReader::vtkInternals::LoadSolution(
@@ -363,11 +378,19 @@ vtkPETScCGNSReader::vtkPETScCGNSReader()
 {
   this->SetNumberOfInputPorts(0);
   this->SetNumberOfOutputPorts(1);
-  this->Internals = std::make_unique<vtkPETScCGNSReader::vtkInternals>(this);
   this->SetController(vtkMultiProcessController::GetGlobalController());
+  this->Internals = std::make_unique<vtkPETScCGNSReader::vtkInternals>(this, false);
 }
 //------------------------------------------------------------------------------
-vtkCxxSetObjectMacro(vtkPETScCGNSReader, Controller, vtkMultiProcessController);
+void vtkPETScCGNSReader::SetController(vtkMultiProcessController* controller)
+{
+  vtkSetObjectBodyMacro(Controller, vtkMultiProcessController, controller);
+  const bool isDifferent = this->Controller != controller;
+  if (controller != nullptr && isDifferent)
+  {
+    this->Internals = std::make_unique<vtkInternals>(this, true /* forcePetscInitialize */);
+  }
+}
 
 //------------------------------------------------------------------------------
 vtkPETScCGNSReader::~vtkPETScCGNSReader()
@@ -423,8 +446,6 @@ struct VecHolder
 int vtkPETScCGNSReader::RequestData(vtkInformation* vtkNotUsed(request),
   vtkInformationVector** vtkNotUsed(inputVector), vtkInformationVector* outputVector)
 {
-
-  this->Internals->Initialize();
 
   vtkInformation* outInfo = outputVector->GetInformationObject(0);
   vtkUnstructuredGrid* grid = vtkUnstructuredGrid::GetData(outInfo);
