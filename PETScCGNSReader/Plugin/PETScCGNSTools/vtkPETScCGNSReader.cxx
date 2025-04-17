@@ -240,7 +240,8 @@ public:
   // Load solution from fileName amd the accosiated Petsc::DM structure in fields
   // For name of the fileds are hardcoded and expected to be "Pressure", "VelocityX","VelocityY",
   // "VelocityZ","Temperature" Returns 1 on success 0 on failure.
-  int LoadSolution(const char* fileName, DM* dm, vtkSmartPointer<vtkDoubleArray> fields);
+  int LoadSolution(
+    const char* fileName, DM* dm, std::vector<vtkSmartPointer<vtkDoubleArray>>& fields);
 };
 //------------------------------------------------------------------------------
 vtkPETScCGNSReader::vtkInternals::vtkInternals(
@@ -318,7 +319,7 @@ void vtkPETScCGNSReader::vtkInternals::Clear()
 }
 //------------------------------------------------------------------------------
 int vtkPETScCGNSReader::vtkInternals::LoadSolution(
-  const char* fileName, DM* dm, vtkSmartPointer<vtkDoubleArray> fields)
+  const char* fileName, DM* dm, std::vector<vtkSmartPointer<vtkDoubleArray>>& fields)
 {
   MPI_Comm comm = PETSC_COMM_WORLD;
   this->dm = dm;
@@ -326,16 +327,30 @@ int vtkPETScCGNSReader::vtkInternals::LoadSolution(
   PetscReal time;
   PetscBool set;
 
-  // Set section component names, used when writing out CGNS files
+  PetscInt nComponents;
+
   PetscSection section;
   VTKPetscCall(DMGetLocalSection(*dm, &section));
 
+  VTKPetscCall(PetscSectionGetFieldComponents(section, 0, &nComponents));
+
+  // TODO Normally names should be defined in the simulation but for now we set them manually
   VTKPetscCall(PetscSectionSetFieldName(section, 0, ""));
   VTKPetscCall(PetscSectionSetComponentName(section, 0, 0, "Pressure"));
   VTKPetscCall(PetscSectionSetComponentName(section, 0, 1, "VelocityX"));
   VTKPetscCall(PetscSectionSetComponentName(section, 0, 2, "VelocityY"));
   VTKPetscCall(PetscSectionSetComponentName(section, 0, 3, "VelocityZ"));
   VTKPetscCall(PetscSectionSetComponentName(section, 0, 4, "Temperature"));
+
+  const char* name;
+  for (PetscInt i = 0; i < nComponents; i++)
+  {
+    auto field = vtkSmartPointer<vtkDoubleArray>::New();
+    VTKPetscCall(PetscSectionGetComponentName(section, 0, i, &name));
+    field->SetName(name);
+    field->SetNumberOfComponents(1);
+    fields.push_back(field);
+  }
 
   // Load solution from CGNS file
   VTKPetscCall(PetscViewerCGNSOpen(comm, fileName, FILE_MODE_READ, &viewer));
@@ -355,14 +370,22 @@ int vtkPETScCGNSReader::vtkInternals::LoadSolution(
   PetscInt lsize;
   VTKPetscCall(VecGetLocalSize(local_sln, &lsize));
 
-  fields->SetName("fields");
-  fields->SetNumberOfComponents(5);
-  fields->SetNumberOfTuples(lsize / 5);
-
+  for (PetscInt i = 0; i < nComponents; i++)
+  {
+    fields[i]->SetNumberOfTuples(lsize / nComponents);
+  }
   VTKPetscCall(VecGetArray(local_sln, &slnArray));
-  memcpy(fields->GetPointer(0), slnArray, lsize * sizeof(double));
-  this->Clear();
+  vtkIdType counter = 0;
+  for (PetscInt i = 0; i < lsize; i += nComponents)
+  {
+    for (PetscInt j = 0; j < nComponents; j++)
+    {
+      fields[j]->SetTuple1(counter, slnArray[i + j]);
+    }
+    counter++;
+  }
 
+  this->Clear();
   return 1;
 }
 
@@ -590,9 +613,12 @@ int vtkPETScCGNSReader::RequestData(vtkInformation* vtkNotUsed(request),
       PETSC_FALSE, &closure_dof, &closure_indices, NULL, NULL));
   }
 
-  vtkSmartPointer<vtkDoubleArray> fields = vtkSmartPointer<vtkDoubleArray>::New();
+  std::vector<vtkSmartPointer<vtkDoubleArray>> fields;
   int success = this->Internals->LoadSolution(this->FileName.c_str(), &dm, fields);
-  grid->GetPointData()->AddArray(fields);
+  for (auto field : fields)
+  {
+    grid->GetPointData()->AddArray(field);
+  }
 
   return success;
 }
