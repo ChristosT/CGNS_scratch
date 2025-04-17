@@ -240,8 +240,7 @@ public:
   // Load solution from fileName amd the accosiated Petsc::DM structure in fields
   // For name of the fileds are hardcoded and expected to be "Pressure", "VelocityX","VelocityY",
   // "VelocityZ","Temperature" Returns 1 on success 0 on failure.
-  int LoadSolution(
-    const char* fileName, DM* dm, std::vector<vtkSmartPointer<vtkDoubleArray>>& fields);
+  int LoadSolution(const char* fileName, DM* dm, vtkUnstructuredGrid* output);
 };
 //------------------------------------------------------------------------------
 vtkPETScCGNSReader::vtkInternals::vtkInternals(
@@ -319,10 +318,11 @@ void vtkPETScCGNSReader::vtkInternals::Clear()
 }
 //------------------------------------------------------------------------------
 int vtkPETScCGNSReader::vtkInternals::LoadSolution(
-  const char* fileName, DM* dm, std::vector<vtkSmartPointer<vtkDoubleArray>>& fields)
+  const char* fileName, DM* dm, vtkUnstructuredGrid* output)
 {
   MPI_Comm comm = PETSC_COMM_WORLD;
   this->dm = dm;
+  std::vector<vtkSmartPointer<vtkDoubleArray>> fields;
 
   PetscReal time;
   PetscBool set;
@@ -384,6 +384,12 @@ int vtkPETScCGNSReader::vtkInternals::LoadSolution(
     }
     counter++;
   }
+
+  for (auto field : fields)
+  {
+    output->GetPointData()->AddArray(field);
+  }
+  output->GetInformation()->Set(vtkDataObject::DATA_TIME_STEP(), time);
 
   this->Clear();
   return 1;
@@ -614,11 +620,7 @@ int vtkPETScCGNSReader::RequestData(vtkInformation* vtkNotUsed(request),
   }
 
   std::vector<vtkSmartPointer<vtkDoubleArray>> fields;
-  int success = this->Internals->LoadSolution(this->FileName.c_str(), &dm, fields);
-  for (auto field : fields)
-  {
-    grid->GetPointData()->AddArray(field);
-  }
+  int success = this->Internals->LoadSolution(this->FileName.c_str(), &dm, grid);
 
   return success;
 }
