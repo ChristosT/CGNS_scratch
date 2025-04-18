@@ -235,6 +235,8 @@ public:
   vtkInternals(vtkPETScCGNSReader* parent, bool forcePetscInitialize = false);
   ~vtkInternals();
 
+  void FinalizePetsc();
+
   // Release Petsc objects
   void Clear();
 
@@ -253,13 +255,7 @@ vtkPETScCGNSReader::vtkInternals::vtkInternals(
   this->Parent = parent;
   if (forcePetscInitialize && this->petsc_schwarz_counter != 0)
   {
-
-    // Avoid "WARNING! There are options you set that were not use" Petsc
-    // message when we create and destroy the reader without actually using it.
-    // This happens currently during the pop-up for readers selection in
-    // ParaView.
-    VTKPetscCallNoReturnValue(PetscOptionsClearValue(NULL, "-dm_plex_cgns_parallel"));
-    VTKPetscCallNoReturnValue(PetscFinalize());
+    this->FinalizePetsc();
     this->petsc_schwarz_counter = 0;
   }
 
@@ -288,8 +284,18 @@ vtkPETScCGNSReader::vtkInternals::~vtkInternals()
   this->petsc_schwarz_counter--;
   if (this->petsc_schwarz_counter == 0)
   {
-    VTKPetscCallNoReturnValue(PetscFinalize());
+    this->FinalizePetsc();
   }
+}
+//------------------------------------------------------------------------------
+void vtkPETScCGNSReader::vtkInternals::FinalizePetsc()
+{
+  // Avoid "WARNING! There are options you set that were not use" Petsc
+  // message when we create and destroy the reader without actually using it.
+  // This happens currently during the pop-up for readers selection in
+  // ParaView.
+  VTKPetscCallNoReturnValue(PetscOptionsClearValue(NULL, "-dm_plex_cgns_parallel"));
+  VTKPetscCallNoReturnValue(PetscFinalize());
 }
 //------------------------------------------------------------------------------
 void vtkPETScCGNSReader::vtkInternals::Clear()
