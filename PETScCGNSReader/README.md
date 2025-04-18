@@ -24,11 +24,13 @@ Step 2: Configure PETSc:
 ./configure --with-cc=mpicc --with-cxx=mpicxx --with-fc=mpif90 --download-f2cblaslapack --with-cgns --download-cgns --download-hdf5 --prefix=<petsc install path>
 ```
 
-If you have installed multiple mpi implementations make sure to specifiy the right one. For example on Ubuntu:
+If you have installed multiple mpi implementations make sure to specify the right one. For example on Ubuntu:
 
 ```
 ./configure --with-cc=mpicc.mpich --with-cxx=mpicxx.mpich --with-fc=mpif90.mpich ... 
 ```
+
+Unless you need to debug the plugin make sure to compile Petsc without debugging  `--with-debugging=0`
 
 * follow the instructions in the terminal and make + make install PETSc
 
