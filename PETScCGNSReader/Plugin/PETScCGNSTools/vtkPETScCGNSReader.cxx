@@ -15,6 +15,7 @@
 #include "vtkPETScCGNSReader.h"
 #include "vtkPointData.h"
 #include "vtkPoints.h"
+#include "vtkTimerLog.h"
 #include "vtkUnstructuredGrid.h"
 #include "vtkUnstructuredGridAlgorithm.h"
 
@@ -247,6 +248,7 @@ vtkPETScCGNSReader::vtkInternals::vtkInternals(
   vtkPETScCGNSReader* parent, bool forcePetscInitialize)
 {
   assert(parent);
+  vtkTimerLog::MarkStartEvent("Initialize Petsc");
 
   this->Parent = parent;
   if (forcePetscInitialize && this->petsc_schwarz_counter != 0)
@@ -278,6 +280,7 @@ vtkPETScCGNSReader::vtkInternals::vtkInternals(
     VTKPetscCallNoReturnValue(PetscInitializeNoArguments());
   }
   this->petsc_schwarz_counter++;
+  vtkTimerLog::MarkEndEvent("Initialize Petsc");
 }
 //------------------------------------------------------------------------------
 vtkPETScCGNSReader::vtkInternals::~vtkInternals()
@@ -493,12 +496,17 @@ int vtkPETScCGNSReader::RequestData(vtkInformation* vtkNotUsed(request),
   PetscReal time;
   PetscBool set;
 
+  vtkTimerLog::MarkStartEvent("Create From File");
   VTKPetscCall(
     DMPlexCreateFromFile(PETSC_COMM_WORLD, this->FileName.c_str(), "ex16_plex", PETSC_TRUE, &dm));
+  vtkTimerLog::MarkEndEvent("Create From File");
 
+  vtkTimerLog::MarkStartEvent("Setup");
   VTKPetscCall(DMSetUp(dm));
   VTKPetscCall(DMSetFromOptions(dm));
+  vtkTimerLog::MarkEndEvent("Setup");
 
+  vtkTimerLog::MarkStartEvent("Petsc Dual FE");
   PetscFE fe_natural;
   PetscDualSpace dual_space_natural;
 
@@ -509,6 +517,8 @@ int vtkPETScCGNSReader::RequestData(vtkInformation* vtkNotUsed(request),
   VTKPetscCall(DMSetLocalSection(dm, NULL));
 
   VTKPetscCall(DMGetDimension(dm, &dim));
+  vtkTimerLog::MarkEndEvent("Petsc Dual FE");
+  vtkTimerLog::MarkStartEvent("PetscFE");
 
   PetscInt cStart, cEnd;
   VTKPetscCall(DMPlexGetHeightStratum(dm, 0, &cStart, &cEnd));
@@ -524,6 +534,8 @@ int vtkPETScCGNSReader::RequestData(vtkInformation* vtkNotUsed(request),
   VTKPetscCall(DMCreateDS(dm));
   VTKPetscCall(PetscFEDestroy(&fe));
 
+  vtkTimerLog::MarkEndEvent("PetscFE");
+  vtkTimerLog::MarkStartEvent("Load Points");
   VTKPetscCall(DMGetCoordinatesLocal(dm, &coords_loc));
   VTKPetscCall(DMGetCoordinateDim(dm, &coords_dim));
   VTKPetscCall(VecGetLocalSize(coords_loc, &coords_loc_size));
@@ -539,7 +551,9 @@ int vtkPETScCGNSReader::RequestData(vtkInformation* vtkNotUsed(request),
   vtkNew<vtkPoints> pts;
   pts->SetData(pts_array.GetPointer());
   grid->SetPoints(pts.GetPointer());
+  vtkTimerLog::MarkEndEvent("Load Points");
 
+  vtkTimerLog::MarkStartEvent("Load Connectivity");
   PetscInt closure_dof, *closure_indices, elem_size;
 
   DM cdm;
@@ -618,9 +632,11 @@ int vtkPETScCGNSReader::RequestData(vtkInformation* vtkNotUsed(request),
     VTKPetscCall(DMPlexRestoreClosureIndices(cdm, cdm->localSection, cdm->localSection, 0,
       PETSC_FALSE, &closure_dof, &closure_indices, NULL, NULL));
   }
+  vtkTimerLog::MarkEndEvent("Load Connectivity");
 
-  std::vector<vtkSmartPointer<vtkDoubleArray>> fields;
+  vtkTimerLog::MarkStartEvent("Load Solution");
   int success = this->Internals->LoadSolution(this->FileName.c_str(), &dm, grid);
+  vtkTimerLog::MarkEndEvent("Load Solution");
 
   return success;
 }

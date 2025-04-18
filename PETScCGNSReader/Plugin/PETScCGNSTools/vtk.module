@@ -6,3 +6,4 @@ DEPENDS
 PRIVATE_DEPENDS
   PkgConfig::PETSc
   VTK::ParallelMPI
+  VTK::CommonSystem
