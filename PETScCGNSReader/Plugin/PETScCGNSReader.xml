@@ -3,14 +3,14 @@
 <ServerManagerConfiguration>
   <!-- This specifies the XML configuration for the ServerManager defining the
        proxies, etc. -->
-  <ProxyGroup name="sources">
-  <SourceProxy name="PETScCGNSReader" class="vtkPETScCGNSReader" label="PETScCGNSReader">
-   <Documentation
-      long_help="PETScCGNSReader"
-      short_help="PETScCGNSReader">
-      Read a CGNS file written using the  DMPlex structure of PETSc
-   </Documentation>
-     <StringVectorProperty
+  <ProxyGroup name="internal_sources">
+    <SourceProxy name="PETScCGNSReaderInternal" class="vtkPETScCGNSReader" label="PETScCGNSReader">
+      <Documentation
+        long_help="PETScCGNSReader"
+        short_help="PETScCGNSReader">
+        Read a CGNS file written using the  DMPlex structure of PETSc
+      </Documentation>
+      <StringVectorProperty
         name="FileName"
         animateable="0"
         command="SetFileName"
@@ -20,12 +20,65 @@
         <Documentation>
           This property specifies the file name for the reader.
         </Documentation>
-     </StringVectorProperty>
+      </StringVectorProperty>
 
-     <Hints>
-      <ReaderFactory extensions="cgns"
+      <Hints>
+        <ReaderFactory extensions="cgns"
                      file_description="PETScCGNSReader Files" />
-     </Hints>
-   </SourceProxy>
+      </Hints>
+    </SourceProxy>
+  </ProxyGroup>
+  <ProxyGroup name="sources">
+    <SourceProxy name="PETScCGNSSeriesReader"
+                 class="vtkFileSeriesReader"
+                 si_class="vtkSIMetaReaderProxy"
+                 label="PETScCGNSSeriesReader"
+                 file_name_method="SetFileName">
+    <Documentation
+      long_help="PETScCGNSReader"
+      short_help="PETScCGNSReader">
+      Read a CGNS file written using the  DMPlex structure of PETSc
+     </Documentation>
+     <SubProxy>
+        <Proxy name="Reader"
+          proxygroup="internal_sources" proxyname="PETScCGNSReaderInternal">
+        </Proxy>
+      </SubProxy>
+
+      <StringVectorProperty name="FileNameInfo"
+        command="GetCurrentFileName"
+        information_only="1" >
+        <SimpleStringInformationHelper />
+      </StringVectorProperty>
+
+       <StringVectorProperty
+         name="FileNames"
+         clean_command="RemoveAllFileNames"
+         command="AddFileName"
+         animateable="0"
+         number_of_elements="0"
+         repeat_command="1">
+         <FileListDomain name="files"/>
+          <Documentation>
+          The list of files to be read by the reader. If more than 1 file is specified,
+          the reader will switch to file series mode in which it will pretend that it
+          can support time and provide 1 file per time step.
+          </Documentation>
+       </StringVectorProperty>
+
+      <DoubleVectorProperty
+         name="TimestepValues"
+         repeatable="1"
+         information_only="1">
+         <TimeStepsInformationHelper/>
+         <Documentation>
+           Available timestep values.
+         </Documentation>
+       </DoubleVectorProperty>
+      <Hints>
+        <ReaderFactory extensions="cgns cgns.series"
+                       file_description="PETScCGNSReader Files" />
+      </Hints>
+    </SourceProxy>
   </ProxyGroup>
 </ServerManagerConfiguration>
